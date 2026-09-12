@@ -40,6 +40,7 @@ class PlateEvent(Base):
     confidence = Column(Float, nullable=False)
     timestamp = Column(DateTime, nullable=False, index=True)
     vehicle_type = Column(String(50), default='Car')  # Car, Truck, Bus, Motorcycle
+    direction = Column(String(50), default='Northbound')
     speed_estimate_kmh = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
@@ -56,6 +57,7 @@ class PlateEvent(Base):
             "plate_text": self.plate_text,
             "confidence": round(self.confidence, 3),
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "direction": self.direction,
             "vehicle_type": self.vehicle_type,
             "speed_estimate_kmh": round(self.speed_estimate_kmh, 1) if self.speed_estimate_kmh else None
         }

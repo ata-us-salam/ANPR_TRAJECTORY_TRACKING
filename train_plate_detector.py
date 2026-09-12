@@ -10,9 +10,11 @@ from ultralytics import YOLO
 def train_plate_model(
     data_yaml="dataset/data.yaml",
     base_model="yolov8n.pt",
-    epochs=1,
+    epochs=10,
     imgsz=640,
-    batch=8,
+    batch=16,
+    workers=4,
+    device="cpu",
     output_dir="models/detection/weights"
 ):
     print("=" * 60)
@@ -39,6 +41,8 @@ def train_plate_model(
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
+        workers=workers,
+        device=device,
         project="runs/detect",
         name="plate_detector",
         exist_ok=True,
@@ -68,9 +72,17 @@ def train_plate_model(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train License Plate Detector.")
-    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
-    parser.add_argument("--batch", type=int, default=4, help="Batch size")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
+    parser.add_argument("--batch", type=int, default=16, help="Batch size")
     parser.add_argument("--imgsz", type=int, default=640, help="Input image size")
+    parser.add_argument("--workers", type=int, default=4, help="Data loader workers")
+    parser.add_argument("--device", type=str, default="cpu", help="Device (cpu, 0, etc.)")
     args = parser.parse_args()
 
-    train_plate_model(epochs=args.epochs, batch=args.batch, imgsz=args.imgsz)
+    train_plate_model(
+        epochs=args.epochs,
+        batch=args.batch,
+        imgsz=args.imgsz,
+        workers=args.workers,
+        device=args.device
+    )

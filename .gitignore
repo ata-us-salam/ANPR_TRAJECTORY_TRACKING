@@ -48,3 +48,6 @@ data/exports/
 # Model training outputs and logs
 runs/
 *.log
+
+# Raw dataset archives
+dataset/archive*/

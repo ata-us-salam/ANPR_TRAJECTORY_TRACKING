@@ -1,4 +1,4 @@
-# YOLOv8 License Plate Detection Configuration
+# YOLOv8 License Plate Detection Configuration (Real Indian Number Plates)
 path: C:\ANPR_TRAJECTORY_TRACKING\dataset
 train: images/train
 val: images/val

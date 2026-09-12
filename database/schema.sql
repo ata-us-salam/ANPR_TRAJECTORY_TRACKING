@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS plate_events (
     confidence FLOAT NOT NULL,
     timestamp TIMESTAMP NOT NULL,
     vehicle_type VARCHAR(50), -- e.g., Car, Truck, Bike
+    direction VARCHAR(50) DEFAULT 'Northbound',
+    speed_estimate_kmh FLOAT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
