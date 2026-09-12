@@ -47,8 +47,21 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Startup] Alert generation skipped: {e}")
 
+    # Start Autonomous Live City ANPR Traffic Streamer
+    try:
+        from backend.services.traffic_streamer import traffic_streamer
+        await traffic_streamer.start()
+    except Exception as e:
+        print(f"[Startup] Traffic streamer start error: {e}")
+
     yield
 
+    # Gracefully stop traffic streamer on server shutdown
+    try:
+        from backend.services.traffic_streamer import traffic_streamer
+        await traffic_streamer.stop()
+    except Exception:
+        pass
 
 app = FastAPI(
     title="City-Wide ANPR Trajectory Tracking & Traffic Surveillance System",

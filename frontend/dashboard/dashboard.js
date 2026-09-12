@@ -8,6 +8,7 @@ function escapeHtml(str) {
 
 let peakChartInstance = null;
 let vehicleDistChartInstance = null;
+let dashboardWs = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   loadSystemOverview();
@@ -18,13 +19,88 @@ document.addEventListener('DOMContentLoaded', () => {
   loadFlaggedVehicles();
   loadVehicleDistribution();
   initDashboardControls();
+  initDashboardWebSocket();
 
-  // Auto-refresh every 30s
+  // Continuous live data synchronization every 5 seconds
   setInterval(() => {
     loadSystemOverview();
+    loadHeatmap();
+    loadPeakHours();
     loadAlerts();
-  }, 30000);
+  }, 5000);
+
+  // Slower refresh for structural metrics every 15 seconds
+  setInterval(() => {
+    loadCameraHealth();
+    loadVehicleDistribution();
+  }, 15000);
 });
+
+/* ── Live WebSocket Stream Connection ── */
+function initDashboardWebSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws/live`;
+
+  try {
+    dashboardWs = new WebSocket(wsUrl);
+
+    dashboardWs.onopen = () => {
+      console.log('⚡ Dashboard live telemetry stream connected');
+      const badge = document.getElementById('live-status-badge');
+      if (badge) {
+        badge.innerHTML = '<span style="width:8px; height:8px; background:#10b981; border-radius:50%; display:inline-block; box-shadow:0 0 10px #10b981;"></span>● LIVE TELEMETRY';
+        badge.style.color = '#10b981';
+        badge.style.borderColor = 'rgba(16,185,129,0.5)';
+      }
+    };
+
+    dashboardWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'detection') {
+          // Immediately bump KPIs on live sighting
+          bumpKPIsOnDetection(msg.data);
+        } else if (msg.type === 'alert') {
+          loadAlerts();
+        }
+      } catch (e) {
+        console.error('WebSocket message parsing error:', e);
+      }
+    };
+
+    dashboardWs.onclose = () => {
+      console.warn('⚠️ Dashboard WebSocket disconnected. Reconnecting in 3s...');
+      const badge = document.getElementById('live-status-badge');
+      if (badge) {
+        badge.innerHTML = '<span style="width:8px; height:8px; background:#eab308; border-radius:50%; display:inline-block;"></span>○ CONNECTING...';
+        badge.style.color = '#eab308';
+        badge.style.borderColor = 'rgba(234,179,8,0.5)';
+      }
+      setTimeout(initDashboardWebSocket, 3000);
+    };
+
+    dashboardWs.onerror = (err) => {
+      console.error('Dashboard WebSocket error:', err);
+    };
+  } catch (err) {
+    console.error('Failed to initialize Dashboard WebSocket:', err);
+  }
+}
+
+function bumpKPIsOnDetection(eventData) {
+  const totalEl = document.getElementById('kpi-total-events');
+  const todayEl = document.getElementById('kpi-today-events');
+  if (totalEl) {
+    const curr = parseInt(totalEl.textContent.replace(/,/g, '')) || 0;
+    totalEl.textContent = (curr + 1).toLocaleString();
+    totalEl.classList.add('kpi-bump');
+    setTimeout(() => totalEl.classList.remove('kpi-bump'), 600);
+  }
+  if (todayEl) {
+    const curr = parseInt(todayEl.textContent.replace(/,/g, '')) || 0;
+    todayEl.textContent = (curr + 1).toLocaleString();
+  }
+}
 
 /* ── System Overview KPIs ── */
 async function loadSystemOverview() {

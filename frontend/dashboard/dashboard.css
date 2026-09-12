@@ -9,11 +9,17 @@
   gap: 24px;
 }
 
-/* KPI Bar */
 .kpi-bar {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
   gap: 16px;
+}
+
+.kpi-bump {
+  color: #10b981 !important;
+  text-shadow: 0 0 12px rgba(16, 185, 129, 0.6);
+  transform: scale(1.08);
+  transition: transform 0.3s ease, color 0.3s ease;
 }
 
 .kpi-card {
