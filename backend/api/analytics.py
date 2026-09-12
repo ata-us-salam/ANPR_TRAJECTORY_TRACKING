@@ -10,6 +10,7 @@ from database.models import get_session
 router = APIRouter(prefix="/analytics", tags=["Traffic Analytics"])
 
 @router.get("/summary")
+@router.get("/metrics")
 def get_summary():
     session = get_session()
     try:

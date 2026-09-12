@@ -222,6 +222,23 @@ def init_db(engine=None):
     if engine is None:
         engine = get_engine()
     Base.metadata.create_all(engine)
+
+    # Lightweight auto-migration for SQLite/Postgres to add newly introduced columns
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(engine)
+        if "plate_events" in inspector.get_table_names():
+            columns = [c["name"] for c in inspector.get_columns("plate_events")]
+            with engine.connect() as conn:
+                if "direction" not in columns:
+                    conn.execute(text("ALTER TABLE plate_events ADD COLUMN direction VARCHAR(50) DEFAULT 'Northbound'"))
+                    conn.commit()
+                if "speed_estimate_kmh" not in columns:
+                    conn.execute(text("ALTER TABLE plate_events ADD COLUMN speed_estimate_kmh FLOAT"))
+                    conn.commit()
+    except Exception as e:
+        print(f"[DB Migration Warning] Column auto-migration check: {e}")
+
     return engine
 
 def get_session(engine=None):

@@ -56,11 +56,22 @@ def search_trajectory(plate: str = Query(..., min_length=2, max_length=20, descr
     finally:
         session.close()
 
+@router.get("")
 @router.get("/all")
-def get_all_trajectories(limit: int = 50):
+def get_all_trajectories(
+    limit: int = Query(50, ge=1, le=200, description="Max trajectories to return"),
+    offset: int = Query(0, ge=0, description="Offset for pagination")
+):
     session = get_session()
     try:
-        trajs = session.query(Trajectory).order_by(Trajectory.start_time.desc()).limit(limit).all()
-        return [t.to_dict() for t in trajs]
+        query = session.query(Trajectory).order_by(Trajectory.start_time.desc())
+        total = query.count()
+        trajs = query.offset(offset).limit(limit).all()
+        return {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "trajectories": [t.to_dict() for t in trajs]
+        }
     finally:
         session.close()
