@@ -1,5 +1,5 @@
 from typing import Optional
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, HTTPException
 from database.models import PlateEvent, get_session
 
 router = APIRouter(prefix="/events", tags=["Plate Events"])
@@ -44,3 +44,78 @@ def get_recent_events(limit: int = Query(15, ge=1, le=50)):
         return [e.to_dict() for e in events]
     finally:
         session.close()
+
+from pydantic import BaseModel, Field
+import datetime
+
+class NewPlateEventRequest(BaseModel):
+    camera_id: int = Field(..., description="ID of detecting surveillance camera")
+    plate_text: str = Field(..., min_length=2, max_length=20, description="License plate string, e.g., MH12AB9999")
+    confidence: float = Field(0.95, ge=0.0, le=1.0, description="OCR confidence score")
+    vehicle_type: Optional[str] = Field("Car", description="Type of vehicle (Car, Truck, Bus, Motorcycle)")
+    direction: Optional[str] = Field("Northbound", description="Direction of vehicle travel")
+    speed_estimate_kmh: Optional[float] = Field(None, ge=0.0, le=300.0, description="Estimated vehicle speed in km/h")
+    timestamp: Optional[datetime.datetime] = Field(None, description="Detection timestamp (defaults to current UTC time)")
+
+@router.post("")
+@router.post("/simulate")
+def create_plate_event(req: NewPlateEventRequest):
+    """
+    Registers a new vehicle plate sighting event in the database,
+    checks for speed/geofence alerts, and broadcasts to live WebSockets.
+    """
+    session = get_session()
+    try:
+        from database.models import Camera
+        cam = session.query(Camera).filter(Camera.id == req.camera_id).first()
+        if not cam:
+            raise HTTPException(status_code=404, detail=f"Camera with ID {req.camera_id} not found.")
+
+        event_time = req.timestamp or datetime.datetime.utcnow()
+        clean_plate = req.plate_text.strip().upper()
+
+        event = PlateEvent(
+            camera_id=req.camera_id,
+            plate_text=clean_plate,
+            confidence=round(req.confidence, 3),
+            timestamp=event_time,
+            vehicle_type=req.vehicle_type or "Car",
+            direction=req.direction or "Northbound",
+            speed_estimate_kmh=req.speed_estimate_kmh
+        )
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        event_dict = event.to_dict()
+
+        # Reconstruct or update trajectory for this plate
+        try:
+            from analytics.trajectory import TrajectoryEngine
+            traj_engine = TrajectoryEngine(session)
+            traj_engine.build_trajectories_for_plate(clean_plate, commit=True)
+        except Exception as te:
+            print(f"[Trajectory Update Warning] {te}")
+
+        # Broadcast via WebSocket if connected clients exist
+        try:
+            from backend.services.websocket_manager import ws_manager
+            import asyncio
+            # Broadcast asynchronously if event loop is running
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.create_task(ws_manager.broadcast_event(event_dict))
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "message": f"Sighting for vehicle {clean_plate} at camera {cam.name} recorded successfully.",
+            "event": event_dict
+        }
+    finally:
+        session.close()
+

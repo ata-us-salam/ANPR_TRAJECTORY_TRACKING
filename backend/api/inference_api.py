@@ -230,3 +230,20 @@ async def upload_video_and_infer(request: Request):
             except Exception:
                 pass
 
+@router.post("/simulate-event")
+def simulate_sighting_event(payload: dict):
+    """
+    Simulates a live ANPR sighting detection directly into the event stream and database.
+    """
+    from backend.api.events import create_plate_event, NewPlateEventRequest
+    req = NewPlateEventRequest(
+        camera_id=payload.get("camera_id", 1),
+        plate_text=payload.get("plate_text", "MH12AB9999"),
+        confidence=float(payload.get("confidence", 0.95)),
+        vehicle_type=payload.get("vehicle_type", "Car"),
+        direction=payload.get("direction", "Northbound"),
+        speed_estimate_kmh=payload.get("speed_estimate_kmh")
+    )
+    return create_plate_event(req)
+
+
