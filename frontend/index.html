@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>City-Wide ANPR Trajectory Tracking & GIS Surveillance</title>
+  <meta name="description" content="Intelligent multi-camera ANPR tracking, vehicle trajectory reconstruction, and GIS analytics dashboard.">
+  
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-icon">🛰️</div>
+      <div>
+        <div class="brand-title">
+          CITYSURV <span style="font-weight:300; opacity:0.8;">// ANPR INTELLIGENCE</span>
+          <span class="brand-badge">POSTGIS + YOLO + OCR</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center Search & Quick Select -->
+    <div class="search-controls">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="plate-search-input" placeholder="Track Plate (e.g. OD02AB1234)..." />
+      <select id="quick-plate-select" aria-label="Select sample vehicle plate">
+        <option value="">Select Tracked Vehicle...</option>
+      </select>
+      <button id="search-btn" type="button">
+        <span>Track Route</span>
+        <span>➔</span>
+      </button>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" data-tab="gis-view" id="tab-gis-btn">
+        <span>🗺️</span> GIS Surveillance Map
+      </button>
+      <button class="tab-btn" data-tab="analytics-view" id="tab-analytics-btn">
+        <span>📊</span> Traffic Analytics
+      </button>
+      <button class="tab-btn" data-tab="inference-view" id="tab-inference-btn">
+        <span>⚡</span> Live AI Tester
+      </button>
+      <a href="/dashboard" class="tab-btn" style="text-decoration:none;">
+        <span>📊</span> Dashboard
+      </a>
+      <a href="/map" class="tab-btn" style="text-decoration:none;">
+        <span>🌐</span> Advanced Map
+      </a>
+    </nav>
+
+    <!-- Header Actions -->
+    <div class="header-actions">
+      <div class="export-dropdown" id="export-dropdown">
+        <button class="export-toggle-btn" id="export-toggle-btn" type="button">
+          <span>📥</span> Export ▾
+        </button>
+        <div class="export-menu" id="export-menu">
+          <a href="/api/export/events?format=csv" class="export-menu-item" target="_blank">📄 Events CSV</a>
+          <a href="/api/export/events?format=json" class="export-menu-item" target="_blank">📋 Events JSON</a>
+          <a href="/api/export/trajectories?format=csv" class="export-menu-item" target="_blank">🛣️ Trajectories CSV</a>
+          <a href="/api/export/report" class="export-menu-item" target="_blank">📊 Full Report</a>
+        </div>
+      </div>
+      <div class="alert-bell-container" id="main-alert-bell">
+        <span class="alert-bell-icon">🔔</span>
+        <span class="alert-badge" id="main-alert-badge">0</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Application Body -->
+  <main class="app-main">
+
+    <!-- 1. GIS MAP & SURVEILLANCE VIEW -->
+    <section id="gis-view" class="view-container gis-layout active">
+      
+      <!-- Leaflet Map Container -->
+      <div class="map-viewport">
+        <div id="map"></div>
+
+        <!-- Floating Map Top Control Bar -->
+        <div class="map-floating-overlay">
+          <div class="map-control-card">
+            <div class="status-indicator">
+              <span class="status-dot"></span>
+              <span id="active-cameras-badge">12 Active Cameras</span>
+            </div>
+            <button class="map-action-btn" id="reset-map-btn" type="button" title="Recenter map view">
+              <span>🎯</span> Recenter Map
+            </button>
+            <button class="map-action-btn" id="toggle-traffic-layer-btn" type="button" title="Toggle on-map traffic congestion bubbles and corridor lines">
+              <span>🚦</span> Traffic Flow Layer
+            </button>
+            <button class="map-action-btn" id="toggle-sidebar-btn" type="button" title="Toggle full-screen map mode">
+              <span>⛶</span> Fullscreen Map
+            </button>
+            <button class="map-action-btn" id="clear-trajectory-btn" type="button" title="Clear active vehicle route">
+              <span>🧹</span> Clear Trajectory
+            </button>
+          </div>
+        </div>
+
+        <!-- Floating Bottom Traffic Legend (Toggled with Traffic Flow Layer) -->
+        <div class="traffic-legend-card" id="traffic-legend" style="display:none;">
+          <div class="legend-title">🚦 Live Traffic Density & Flow Corridors</div>
+          <div class="legend-item"><span class="legend-color" style="background:#f43f5e; box-shadow:0 0 6px #f43f5e;"></span> Heavy Congestion (> 20 Sightings)</div>
+          <div class="legend-item"><span class="legend-color" style="background:#f59e0b; box-shadow:0 0 6px #f59e0b;"></span> Moderate Volume (10 - 20 Sightings)</div>
+          <div class="legend-item"><span class="legend-color" style="background:#10b981; box-shadow:0 0 6px #10b981;"></span> Normal Flow (< 10 Sightings)</div>
+          <div class="legend-item"><span style="color:#00f2fe; font-weight:700;">━━►</span> Top Arterial Flow Corridors</div>
+        </div>
+
+        <!-- Floating Bottom Trajectory Playback Bar -->
+        <div class="playback-bar" id="playback-bar">
+          <button class="playback-play-btn" id="playback-toggle-btn" type="button">▶</button>
+          <div class="playback-info">
+            <div class="playback-plate" id="playback-plate-display">OD02AB1234</div>
+            <div class="playback-step" id="playback-step-display">Trajectory Simulation Ready</div>
+          </div>
+          <button class="map-action-btn" id="close-playback-btn" style="padding:4px 8px;" type="button">✕</button>
+        </div>
+      </div>
+
+      <!-- Right Surveillance Intelligence Sidebar -->
+      <aside class="surveillance-sidebar">
+        
+        <!-- HUD Metric Counters -->
+        <div class="hud-metrics">
+          <div class="metric-card" style="--card-accent: var(--accent-cyan);">
+            <div class="metric-label">Total Detections</div>
+            <div class="metric-value" id="hud-total-detections">125</div>
+            <div class="metric-sub">Across metropolitan grid</div>
+          </div>
+
+          <div class="metric-card" style="--card-accent: var(--accent-blue);">
+            <div class="metric-label">Vehicles Tracked</div>
+            <div class="metric-value" id="hud-unique-vehicles">18</div>
+            <div class="metric-sub">Reconstructed routes</div>
+          </div>
+
+          <div class="metric-card" style="--card-accent: var(--accent-neon-green);">
+            <div class="metric-label">Checkpoints Online</div>
+            <div class="metric-value" id="hud-active-cams">12/13</div>
+            <div class="metric-sub">92.3% network uptime</div>
+          </div>
+
+          <div class="metric-card" style="--card-accent: var(--accent-purple);">
+            <div class="metric-label">OCR Confidence</div>
+            <div class="metric-value" id="hud-ocr-conf">94.6%</div>
+            <div class="metric-sub">PaddleOCR + Voting</div>
+          </div>
+        </div>
+
+        <!-- Active Trajectory Inspector Panel -->
+        <div class="active-trajectory-panel" id="active-trajectory-panel">
+          <div class="plate-badge-container">
+            <div class="plate-box">
+              <div class="plate-flag">
+                <div class="plate-flag-band"></div>
+                <div class="plate-flag-ind">IND</div>
+                <div class="plate-flag-band"></div>
+              </div>
+              <div class="plate-number" id="selected-plate-number">OD02AB1234</div>
+            </div>
+            <button class="map-action-btn" id="sidebar-playback-btn" type="button">
+              <span>▶</span> Play Route
+            </button>
+          </div>
+
+          <div class="trajectory-stats-row">
+            <div class="stat-pill">
+              <div class="stat-pill-num" id="traj-distance">16.3 km</div>
+              <div class="stat-pill-label">Distance</div>
+            </div>
+            <div class="stat-pill">
+              <div class="stat-pill-num" id="traj-speed">56.2 km/h</div>
+              <div class="stat-pill-label">Avg Speed</div>
+            </div>
+            <div class="stat-pill">
+              <div class="stat-pill-num" id="traj-cameras">10 Cams</div>
+              <div class="stat-pill-label">Sightings</div>
+            </div>
+          </div>
+
+          <div class="timeline-title">Camera Trajectory Sequence</div>
+          <div class="checkpoint-timeline" id="checkpoint-timeline">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Live Surveillance Stream Feed -->
+        <div class="live-feed-section">
+          <div class="section-header">
+            <div class="section-title">
+              <span class="status-dot"></span>
+              Live Detection Stream
+            </div>
+            <span style="font-size:0.7rem; color:var(--text-dim);" id="feed-count-label">Latest 15 Sightings</span>
+          </div>
+
+          <div class="feed-list" id="feed-list">
+            <!-- Populated dynamically from /api/events/recent -->
+          </div>
+        </div>
+
+      </aside>
+
+    </section>
+
+    <!-- 2. TRAFFIC ANALYTICS VIEW -->
+    <section id="analytics-view" class="view-container analytics-layout">
+      
+      <!-- Hourly Traffic Volume Chart -->
+      <div class="chart-card span-8">
+        <div class="chart-header">
+          <div class="chart-title">📈 City-Wide Hourly Traffic Volume & Throughput</div>
+          <span style="font-size:0.75rem; color:var(--text-dim);">Hourly event distribution (24-Hour Cycle)</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="trafficVolumeChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Vehicle Type Distribution Chart -->
+      <div class="chart-card span-4">
+        <div class="chart-header">
+          <div class="chart-title">🚗 Vehicle Category Share</div>
+          <span style="font-size:0.75rem; color:var(--text-dim);">Detections by class</span>
+        </div>
+        <div class="chart-container">
+          <canvas id="vehicleDistributionChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Top Origin -> Destination Corridors -->
+      <div class="chart-card span-8">
+        <div class="chart-header">
+          <div class="chart-title">🔄 Top Origin - Destination (OD) Travel Corridors</div>
+          <span style="font-size:0.75rem; color:var(--text-dim);">Aggregated vehicle trajectory pairs</span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="data-table" id="od-matrix-table">
+            <thead>
+              <tr>
+                <th>Origin Checkpoint</th>
+                <th>Destination Checkpoint</th>
+                <th>Trips Observed</th>
+                <th>Avg Transit Time</th>
+                <th>Avg Distance</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Populated dynamically -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Speed Anomaly Radar -->
+      <div class="chart-card span-4">
+        <div class="chart-header">
+          <div class="chart-title">🚨 Speed Anomalies (>75 km/h)</div>
+          <span style="font-size:0.75rem; color:var(--accent-rose);">Inter-camera velocity flags</span>
+        </div>
+        <div style="overflow-y:auto; max-height: 280px;" id="speed-anomalies-list">
+          <!-- Populated dynamically -->
+        </div>
+      </div>
+
+    </section>
+
+    <!-- 3. LIVE AI INFERENCE TESTER VIEW -->
+    <section id="inference-view" class="view-container inference-layout">
+      
+      <div class="inference-header-box">
+        <div>
+          <h2 style="font-size: 1.3rem; margin-bottom: 4px;">Real-Time AI Pipeline Sandbox</h2>
+          <p style="color: var(--text-muted); font-size: 0.85rem;">
+            Test the end-to-end computer vision pipeline: Vehicle Detection (YOLOv8) ➔ Plate Localization ➔ Image Enhancement ➔ Optical Character Recognition ➔ Temporal Voting.
+          </p>
+        </div>
+        <div class="sandbox-subnav">
+          <button class="subnav-pill active" id="mode-image-btn" type="button">
+            <span>📸</span> Single Vehicle Image
+          </button>
+          <button class="subnav-pill" id="mode-video-btn" type="button">
+            <span>🎥</span> CCTV Video Footage
+          </button>
+        </div>
+      </div>
+
+      <!-- 1. IMAGE MODE CONTAINER -->
+      <div id="image-sandbox-container">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <div style="font-size:0.88rem; color:var(--text-muted);">
+            Upload any car, bus, truck, or motorcycle photo from your local system or test sample images:
+          </div>
+          <div class="inference-controls-row">
+            <button class="demo-btn" id="run-sample-1-btn" type="button">
+              <span>🚗</span> Sample Car (test_image_2.jpg)
+            </button>
+            <button class="demo-btn" id="run-sample-2-btn" type="button">
+              <span>🚙</span> Mock Car (sample_car.jpg)
+            </button>
+          </div>
+        </div>
+
+        <!-- Drag & Drop Upload Zone for Images -->
+        <div class="dropzone" id="image-dropzone">
+          <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp,image/jpg" style="display:none;" />
+          <div style="font-size: 36px; margin-bottom: 10px;">📸</div>
+          <div style="font-weight: 700; font-size: 1.05rem; margin-bottom: 6px; color:#fff;">
+            Click to Browse or Drag & Drop Vehicle Photo
+          </div>
+          <div style="color: var(--accent-cyan); font-size: 0.82rem; font-weight:600;">
+            Supports JPG, PNG, WEBP from traffic speed cameras & surveillance feeds
+          </div>
+        </div>
+
+        <!-- Image Inference Results -->
+        <div class="inference-results-grid">
+          <div class="image-preview-card">
+            <div id="preview-placeholder" style="color:var(--text-dim); text-align:center;">
+              <div style="font-size:40px; margin-bottom:10px;">🖼️</div>
+              <div>Vehicle preview will appear here upon upload</div>
+            </div>
+            <img id="inference-preview-img" class="preview-img" style="display:none;" alt="Inference Preview" />
+          </div>
+
+          <div class="inference-output-card">
+            <div class="chart-header">
+              <div class="chart-title">🔬 Detected Plate & Recognition Logs</div>
+              <span id="inference-status-badge" class="confidence-meter" style="display:none;">Ready</span>
+            </div>
+
+            <div id="inference-results-content" style="flex:1; display:flex; flex-direction:column; justify-content:center; color:var(--text-dim); text-align:center;">
+              Click "Upload Vehicle Photo" or choose a sample to run detection bounding boxes, OCR readings, and format validation.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. CCTV VIDEO MODE CONTAINER -->
+      <div id="video-sandbox-container" style="display:none;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <div style="font-size:0.88rem; color:var(--text-muted);">
+            Upload CCTV video footage for continuous tracking and temporal majority voting:
+          </div>
+          <div class="inference-controls-row">
+            <button class="demo-btn" id="run-sample-video-btn" type="button">
+              <span>🎥</span> Run on CCTV Sample (test_video.mp4)
+            </button>
+          </div>
+        </div>
+
+        <!-- Drag & Drop Upload Zone for Videos -->
+        <div class="dropzone" id="video-dropzone">
+          <input type="file" id="video-file-input" accept="video/mp4,video/x-m4v,video/*" style="display:none;" />
+          <div style="font-size: 36px; margin-bottom: 10px;">📹</div>
+          <div style="font-weight: 700; font-size: 1.05rem; margin-bottom: 6px; color:#fff;">
+            Click to Browse or Drag & Drop CCTV Video Footage
+          </div>
+          <div style="color: var(--accent-cyan); font-size: 0.82rem; font-weight:600;">
+            Supports MP4, AVI, WebM (up to 50 MB)
+          </div>
+        </div>
+
+        <!-- Video Inference Results Grid -->
+        <div class="inference-results-grid">
+          <div class="image-preview-card">
+            <div id="video-placeholder" style="color:var(--text-dim); text-align:center;">
+              <div style="font-size:40px; margin-bottom:10px;">🎬</div>
+              <div>Video player will appear here upon upload</div>
+            </div>
+            <video id="cctv-video-player" class="video-preview-player" style="display:none;" controls></video>
+          </div>
+
+          <div class="inference-output-card">
+            <div class="chart-header">
+              <div class="chart-title">📹 Tracked Vehicles & Voting Telemetry</div>
+              <span id="video-status-badge" class="confidence-meter" style="display:none;">Ready</span>
+            </div>
+
+            <div id="video-results-content" style="flex:1; display:flex; flex-direction:column; justify-content:center; color:var(--text-dim); text-align:center;">
+              Upload CCTV footage or run the sample video to track vehicles across frames and finalize license plates via temporal majority voting.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Alert Slide-Over Panel -->
+  <div class="alert-slideover" id="main-alert-slideover">
+    <div class="slideover-header">
+      <div class="slideover-title">🔔 Alert Notifications</div>
+      <button class="slideover-close" id="main-close-slideover" type="button">✕</button>
+    </div>
+    <div class="slideover-body" id="main-slideover-alerts-list"></div>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Application JS -->
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# YOLOv8 License Plate Detection Configuration
+path: C:\ANPR_TRAJECTORY_TRACKING\dataset
+train: images/train
+val: images/val
+
+names:
+  0: license_plate

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Advanced GIS Map — CITYSURV ANPR Intelligence</title>
+  <meta name="description" content="Advanced GIS map with geofencing, route prediction, multi-vehicle tracking, and camera coverage visualization.">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <!-- Leaflet Draw CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+  <!-- Shared base styles -->
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Map-specific styles -->
+  <link rel="stylesheet" href="/static/map/map.css">
+</head>
+<body>
+
+  <!-- Map Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-icon">🌐</div>
+      <div>
+        <div class="brand-title">
+          CITYSURV <span style="font-weight:300; opacity:0.8;">// ADVANCED GIS</span>
+          <span class="brand-badge">GEOFENCE + PREDICT</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="nav-tabs">
+      <a href="/" class="tab-btn">
+        <span>🗺️</span> GIS Map
+      </a>
+      <a href="/dashboard" class="tab-btn">
+        <span>📊</span> Dashboard
+      </a>
+      <a href="/map" class="tab-btn active">
+        <span>🌐</span> Advanced Map
+      </a>
+    </nav>
+
+    <div class="map-header-controls">
+      <button class="map-ctrl-btn active" id="toggle-cameras-btn" type="button">
+        <span>📹</span> Cameras
+      </button>
+      <button class="map-ctrl-btn" id="toggle-coverage-btn" type="button">
+        <span>📡</span> Coverage
+      </button>
+      <button class="map-ctrl-btn" id="toggle-geofences-btn" type="button">
+        <span>🔲</span> Geofences
+      </button>
+      <button class="map-ctrl-btn" id="toggle-predictions-btn" type="button">
+        <span>🔮</span> Predictions
+      </button>
+    </div>
+  </header>
+
+  <!-- Full-Screen Map + Sidebar -->
+  <main class="adv-map-main">
+    <div class="adv-map-viewport">
+      <div id="adv-map"></div>
+
+      <!-- Floating Control Panel -->
+      <div class="map-float-panel" id="map-float-panel">
+        <div class="float-panel-section">
+          <div class="float-section-title">🔲 Geofence Zones</div>
+          <button class="small-action-btn" id="draw-geofence-btn" type="button">+ Draw Zone</button>
+          <div class="geofence-list" id="geofence-list">
+            <!-- dynamically populated -->
+          </div>
+        </div>
+
+        <div class="float-panel-section">
+          <div class="float-section-title">🔮 Route Prediction</div>
+          <div class="predict-input-row">
+            <input type="text" id="predict-plate-input" placeholder="Enter plate..." class="predict-input"/>
+            <button class="small-action-btn" id="predict-btn" type="button">Predict</button>
+          </div>
+          <div class="prediction-results" id="prediction-results">
+            <!-- dynamically populated -->
+          </div>
+        </div>
+
+        <div class="float-panel-section">
+          <div class="float-section-title">🚗 Multi-Vehicle Tracker</div>
+          <div class="predict-input-row">
+            <input type="text" id="multi-track-input" placeholder="Add plate..." class="predict-input"/>
+            <button class="small-action-btn" id="multi-track-btn" type="button">Track</button>
+          </div>
+          <div class="tracked-vehicles-list" id="tracked-vehicles-list">
+            <!-- dynamically populated -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Leaflet Draw JS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <!-- Map JS -->
+  <script src="/static/map/map.js"></script>
+</body>
+</html>

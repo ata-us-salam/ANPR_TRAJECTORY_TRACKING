@@ -1,0 +1,296 @@
+/* Advanced Map page styles */
+
+.adv-map-main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.adv-map-viewport {
+  flex: 1;
+  position: relative;
+  height: 100%;
+}
+
+#adv-map {
+  width: 100%;
+  height: 100%;
+  background: #060911;
+}
+
+/* Floating Control Panel */
+.map-float-panel {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 320px;
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  z-index: 1000;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.float-panel-section {
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 14px;
+}
+
+.float-panel-section:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.float-section-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 10px;
+}
+
+.small-action-btn {
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: var(--accent-cyan);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-bottom: 8px;
+}
+
+.small-action-btn:hover {
+  background: rgba(56, 189, 248, 0.25);
+  transform: translateY(-1px);
+}
+
+.predict-input-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.predict-input {
+  flex: 1;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid var(--border-subtle);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  text-transform: uppercase;
+}
+
+.predict-input:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.15);
+}
+
+/* Geofence list items */
+.geofence-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.geofence-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.78rem;
+}
+
+.geofence-name {
+  color: var(--text-main);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.geofence-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.geofence-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  transition: color 0.15s;
+}
+
+.geofence-delete-btn:hover {
+  color: #f43f5e;
+}
+
+/* Prediction results */
+.prediction-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.prediction-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.prediction-step-num {
+  background: var(--accent-purple);
+  color: #fff;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.prediction-step-info {
+  flex: 1;
+}
+
+.prediction-cam-name {
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--text-main);
+}
+
+.prediction-cam-loc {
+  font-size: 0.68rem;
+  color: var(--text-dim);
+}
+
+.prediction-prob {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--accent-purple);
+}
+
+/* Tracked vehicles */
+.tracked-vehicles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.tracked-vehicle-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(0, 242, 254, 0.04);
+  border: 1px solid rgba(0, 242, 254, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
+.tracked-plate {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--accent-cyan);
+}
+
+.tracked-remove-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  transition: color 0.15s;
+}
+
+.tracked-remove-btn:hover {
+  color: #f43f5e;
+}
+
+/* Map Header Controls */
+.map-header-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.map-ctrl-btn {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s;
+}
+
+.map-ctrl-btn:hover {
+  color: #fff;
+  border-color: var(--accent-cyan);
+}
+
+.map-ctrl-btn.active {
+  background: rgba(0, 242, 254, 0.12);
+  border-color: rgba(0, 242, 254, 0.3);
+  color: var(--accent-cyan);
+}
+
+/* Coverage circles */
+.coverage-circle {
+  opacity: 0.15;
+}
+
+/* Geofence polygon hover */
+.leaflet-interactive.geofence-polygon:hover {
+  fill-opacity: 0.4 !important;
+}
+
+/* Predicted route dashed line */
+.predicted-route-line {
+  stroke-dasharray: 10, 8;
+  animation: dash-flow 1s linear infinite;
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -18;
+  }
+}

@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — CITYSURV ANPR Intelligence</title>
+  <meta name="description" content="Real-time camera health monitoring, detection heatmaps, peak-hour analysis, and alert management dashboard.">
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Shared base styles -->
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Dashboard-specific styles -->
+  <link rel="stylesheet" href="/static/dashboard/dashboard.css">
+</head>
+<body>
+
+  <!-- Dashboard Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-icon">📊</div>
+      <div>
+        <div class="brand-title">
+          CITYSURV <span style="font-weight:300; opacity:0.8;">// COMMAND CENTER</span>
+          <span class="brand-badge">DASHBOARD v2.0</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="nav-tabs">
+      <a href="/" class="tab-btn">
+        <span>🗺️</span> GIS Map
+      </a>
+      <a href="/dashboard" class="tab-btn active">
+        <span>📊</span> Dashboard
+      </a>
+      <a href="/map" class="tab-btn">
+        <span>🌐</span> Advanced Map
+      </a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="export-btn" id="export-csv-btn" type="button">
+        <span>📥</span> Export CSV
+      </button>
+      <button class="export-btn" id="export-report-btn" type="button">
+        <span>📄</span> Report
+      </button>
+      <div class="alert-bell-container" id="alert-bell">
+        <span class="alert-bell-icon">🔔</span>
+        <span class="alert-badge" id="alert-badge">0</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Dashboard Content -->
+  <main class="dashboard-main">
+
+    <!-- Row 1: System Health KPI Bar -->
+    <section class="kpi-bar">
+      <div class="kpi-card" style="--kpi-accent:#00f2fe;">
+        <div class="kpi-icon">🎯</div>
+        <div>
+          <div class="kpi-value" id="kpi-total-events">—</div>
+          <div class="kpi-label">Total Detections</div>
+        </div>
+      </div>
+      <div class="kpi-card" style="--kpi-accent:#4facfe;">
+        <div class="kpi-icon">📆</div>
+        <div>
+          <div class="kpi-value" id="kpi-today-events">—</div>
+          <div class="kpi-label">Today's Events</div>
+        </div>
+      </div>
+      <div class="kpi-card" style="--kpi-accent:#10b981;">
+        <div class="kpi-icon">📹</div>
+        <div>
+          <div class="kpi-value" id="kpi-active-cameras">—</div>
+          <div class="kpi-label">Active Cameras</div>
+        </div>
+      </div>
+      <div class="kpi-card" style="--kpi-accent:#8b5cf6;">
+        <div class="kpi-icon">🔬</div>
+        <div>
+          <div class="kpi-value" id="kpi-ocr-confidence">—</div>
+          <div class="kpi-label">OCR Confidence</div>
+        </div>
+      </div>
+      <div class="kpi-card" style="--kpi-accent:#f59e0b;">
+        <div class="kpi-icon">🚗</div>
+        <div>
+          <div class="kpi-value" id="kpi-unique-vehicles">—</div>
+          <div class="kpi-label">Unique Vehicles</div>
+        </div>
+      </div>
+      <div class="kpi-card" style="--kpi-accent:#f43f5e;">
+        <div class="kpi-icon">🚨</div>
+        <div>
+          <div class="kpi-value" id="kpi-alert-count">—</div>
+          <div class="kpi-label">Active Alerts</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 2: Heatmap + Peak Hours -->
+    <section class="dashboard-grid">
+
+      <!-- Detection Heatmap -->
+      <div class="dash-card span-8">
+        <div class="dash-card-header">
+          <div class="dash-card-title">🌡️ 24-Hour Detection Heatmap (Hour × Camera)</div>
+          <span class="dash-card-subtitle">Colour intensity = detection density</span>
+        </div>
+        <div class="heatmap-container" id="heatmap-container">
+          <!-- Dynamically generated -->
+        </div>
+      </div>
+
+      <!-- Peak Hour Analysis -->
+      <div class="dash-card span-4">
+        <div class="dash-card-header">
+          <div class="dash-card-title">⏰ Peak Hour Analysis</div>
+          <span class="dash-card-subtitle">Traffic volume by time band</span>
+        </div>
+        <div class="peak-hour-display">
+          <div class="peak-hour-badge" id="peak-hour-badge">
+            <div class="peak-hour-time" id="peak-hour-time">—</div>
+            <div class="peak-hour-label">Peak Hour</div>
+          </div>
+          <div class="band-bars" id="band-bars">
+            <!-- Dynamically generated -->
+          </div>
+        </div>
+        <div class="chart-container" style="min-height:180px;">
+          <canvas id="peakHourChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 3: Camera Health + Alerts -->
+    <section class="dashboard-grid">
+
+      <!-- Camera Health Matrix -->
+      <div class="dash-card span-7">
+        <div class="dash-card-header">
+          <div class="dash-card-title">📹 Camera Health Matrix</div>
+          <span class="dash-card-subtitle">Real-time status, uptime, and detection rates</span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="health-table" id="camera-health-table">
+            <thead>
+              <tr>
+                <th>Camera</th>
+                <th>Location</th>
+                <th>Status</th>
+                <th>Uptime</th>
+                <th>24h Detections</th>
+                <th>Rate/hr</th>
+                <th>Last Active</th>
+              </tr>
+            </thead>
+            <tbody>
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Real-Time Alerts Panel -->
+      <div class="dash-card span-5">
+        <div class="dash-card-header">
+          <div class="dash-card-title">🚨 Real-Time Alerts</div>
+          <div style="display:flex; gap:8px;">
+            <button class="small-btn" id="check-anomalies-btn" type="button">Scan Anomalies</button>
+            <button class="small-btn" id="ack-all-btn" type="button">Acknowledge All</button>
+          </div>
+        </div>
+        <div class="alerts-feed" id="alerts-feed">
+          <div style="color:var(--text-dim); padding:20px; text-align:center;">Loading alerts...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 4: Flagged Vehicles + Vehicle Distribution -->
+    <section class="dashboard-grid">
+
+      <!-- Flagged Vehicles -->
+      <div class="dash-card span-6">
+        <div class="dash-card-header">
+          <div class="dash-card-title">🚩 Flagged Vehicle Watchlist</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input type="text" id="flag-plate-input" placeholder="Plate number..." class="flag-input">
+            <button class="small-btn" id="flag-vehicle-btn" type="button">+ Flag</button>
+          </div>
+        </div>
+        <div class="flagged-list" id="flagged-list">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Vehicle Type Distribution -->
+      <div class="dash-card span-6">
+        <div class="dash-card-header">
+          <div class="dash-card-title">🚗 Vehicle Category Distribution</div>
+          <span class="dash-card-subtitle">Across all cameras</span>
+        </div>
+        <div class="chart-container" style="min-height:250px;">
+          <canvas id="vehicleDistChart"></canvas>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Alert Slide-Over Panel -->
+  <div class="alert-slideover" id="alert-slideover">
+    <div class="slideover-header">
+      <div class="slideover-title">🔔 Alert Notifications</div>
+      <button class="slideover-close" id="close-slideover" type="button">✕</button>
+    </div>
+    <div class="slideover-body" id="slideover-alerts-list">
+      <!-- Alerts listed here -->
+    </div>
+  </div>
+
+  <script src="/static/dashboard/dashboard.js"></script>
+</body>
+</html>
