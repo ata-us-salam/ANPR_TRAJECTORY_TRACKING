@@ -125,3 +125,14 @@ def predict_route(
             return engine.get_transition_matrix_summary()
     finally:
         session.close()
+
+@router.get("/congestion")
+def get_congestion():
+    """Get real-time congestion scores and status for all smart city cameras."""
+    session = get_session()
+    try:
+        analyzer = TrafficVolumeAnalyzer(session)
+        return analyzer.get_congestion_status()
+    finally:
+        session.close()
+

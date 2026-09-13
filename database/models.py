@@ -14,6 +14,7 @@ class Camera(Base):
     location_name = Column(String(255), default="City Intersection")
     latitude = Column(Float, nullable=False)
     longitude = Column(Float, nullable=False)
+    direction = Column(String(50), default='North → South')
     status = Column(String(50), default='ACTIVE')  # ACTIVE, MAINTENANCE, OFFLINE
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     
@@ -26,6 +27,7 @@ class Camera(Base):
             "location_name": self.location_name,
             "latitude": self.latitude,
             "longitude": self.longitude,
+            "direction": self.direction or "North → South",
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
@@ -40,6 +42,8 @@ class PlateEvent(Base):
     confidence = Column(Float, nullable=False)
     timestamp = Column(DateTime, nullable=False, index=True)
     vehicle_type = Column(String(50), default='Car')  # Car, Truck, Bus, Motorcycle
+    vehicle_color = Column(String(50), default='White')
+    make_model = Column(String(100), default='Sedan')
     direction = Column(String(50), default='Northbound')
     speed_estimate_kmh = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
@@ -59,6 +63,8 @@ class PlateEvent(Base):
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "direction": self.direction,
             "vehicle_type": self.vehicle_type,
+            "vehicle_color": self.vehicle_color or "White",
+            "make_model": self.make_model or "Sedan",
             "speed_estimate_kmh": round(self.speed_estimate_kmh, 1) if self.speed_estimate_kmh else None
         }
 
@@ -227,14 +233,27 @@ def init_db(engine=None):
     try:
         from sqlalchemy import inspect, text
         inspector = inspect(engine)
-        if "plate_events" in inspector.get_table_names():
-            columns = [c["name"] for c in inspector.get_columns("plate_events")]
-            with engine.connect() as conn:
+        tables = inspector.get_table_names()
+        with engine.connect() as conn:
+            if "cameras" in tables:
+                cam_cols = [c["name"] for c in inspector.get_columns("cameras")]
+                if "direction" not in cam_cols:
+                    conn.execute(text("ALTER TABLE cameras ADD COLUMN direction VARCHAR(50) DEFAULT 'North → South'"))
+                    conn.commit()
+
+            if "plate_events" in tables:
+                columns = [c["name"] for c in inspector.get_columns("plate_events")]
                 if "direction" not in columns:
                     conn.execute(text("ALTER TABLE plate_events ADD COLUMN direction VARCHAR(50) DEFAULT 'Northbound'"))
                     conn.commit()
                 if "speed_estimate_kmh" not in columns:
                     conn.execute(text("ALTER TABLE plate_events ADD COLUMN speed_estimate_kmh FLOAT"))
+                    conn.commit()
+                if "vehicle_color" not in columns:
+                    conn.execute(text("ALTER TABLE plate_events ADD COLUMN vehicle_color VARCHAR(50) DEFAULT 'White'"))
+                    conn.commit()
+                if "make_model" not in columns:
+                    conn.execute(text("ALTER TABLE plate_events ADD COLUMN make_model VARCHAR(100) DEFAULT 'Sedan'"))
                     conn.commit()
     except Exception as e:
         print(f"[DB Migration Warning] Column auto-migration check: {e}")

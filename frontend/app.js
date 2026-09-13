@@ -1332,3 +1332,396 @@ function createSlideoverAlertCard(alert) {
   return card;
 }
 
+/* -------------------------------------------------------------
+ * 13. Navigation Tabs Management
+ * ----------------------------------------------------------- */
+function initTabs() {
+  const tabButtons = document.querySelectorAll('.nav-tabs button[data-tab]');
+  const views = {
+    'gis-view': document.getElementById('gis-view'),
+    'live-anpr-view': document.getElementById('live-anpr-view'),
+    'inference-view': document.getElementById('inference-view')
+  };
+
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetTab = btn.getAttribute('data-tab');
+      if (!targetTab) return;
+
+      // Update button active state
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      // Hide all views
+      Object.values(views).forEach(v => {
+        if (v) {
+          v.classList.remove('active');
+          v.style.display = 'none';
+        }
+      });
+
+      // Show selected view
+      const activeView = views[targetTab];
+      if (activeView) {
+        activeView.classList.add('active');
+        if (targetTab === 'gis-view') {
+          activeView.style.display = 'flex';
+          setTimeout(() => { if (map) map.invalidateSize(); }, 200);
+        } else {
+          activeView.style.display = 'block';
+        }
+
+        if (targetTab === 'live-anpr-view') {
+          initLiveCctvPipeline();
+          loadLiveAnprTable();
+        }
+      }
+    });
+  });
+
+  // Camera selector switch
+  const camSelect = document.getElementById('cctv-cam-select');
+  if (camSelect) {
+    camSelect.addEventListener('change', () => {
+      const opt = camSelect.options[camSelect.selectedIndex];
+      const titleElem = document.getElementById('cctv-cam-title');
+      if (titleElem && opt) {
+        titleElem.textContent = opt.text.toUpperCase();
+      }
+    });
+  }
+}
+
+/* -------------------------------------------------------------
+ * 14. Phase 1: Live CCTV Optical Feed & Bounding Box Canvas
+ * ----------------------------------------------------------- */
+let cctvCanvas = null;
+let cctvCtx = null;
+let cctvAnimationActive = false;
+let currentDetections = [];
+let laneOffset = 0;
+
+function initLiveCctvPipeline() {
+  cctvCanvas = document.getElementById('live-cctv-canvas');
+  if (!cctvCanvas) return;
+  cctvCtx = cctvCanvas.getContext('2d');
+
+  if (!cctvAnimationActive) {
+    cctvAnimationActive = true;
+    requestAnimationFrame(renderCctvFrame);
+  }
+}
+
+function renderCctvFrame() {
+  if (!cctvCanvas || !cctvCtx) return;
+  const ctx = cctvCtx;
+  const w = cctvCanvas.width;
+  const h = cctvCanvas.height;
+
+  // 1. Asphalt Road Background
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, w, h);
+
+  // Road Perspective Surface
+  ctx.fillStyle = '#1e293b';
+  ctx.beginPath();
+  ctx.moveTo(w * 0.25, 0);
+  ctx.lineTo(w * 0.75, 0);
+  ctx.lineTo(w * 0.95, h);
+  ctx.lineTo(w * 0.05, h);
+  ctx.closePath();
+  ctx.fill();
+
+  // Road Shoulders
+  ctx.strokeStyle = '#3b82f6';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Lane Dividers (animated motion)
+  laneOffset = (laneOffset + 3.5) % 40;
+  ctx.strokeStyle = '#f59e0b';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([20, 20]);
+  ctx.lineDashOffset = -laneOffset;
+
+  // Center Dash
+  ctx.beginPath();
+  ctx.moveTo(w * 0.5, 0);
+  ctx.lineTo(w * 0.5, h);
+  ctx.stroke();
+
+  // Quarter Dashes
+  ctx.setLineDash([15, 25]);
+  ctx.beginPath();
+  ctx.moveTo(w * 0.38, 0);
+  ctx.lineTo(w * 0.28, h);
+  ctx.moveTo(w * 0.62, 0);
+  ctx.lineTo(w * 0.72, h);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Time HUD Overlay Update
+  const timeHud = document.getElementById('cctv-time-hud');
+  if (timeHud) {
+    const now = new Date();
+    timeHud.textContent = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+  }
+
+  // 2. Render Active Detections & Bounding Boxes
+  const now = Date.now();
+  currentDetections = currentDetections.filter(d => now - d.startTime < 4500);
+
+  // If no recent detection, generate a subtle scanning pulse
+  if (currentDetections.length === 0) {
+    const scanY = (now / 15) % h;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.1, scanY);
+    ctx.lineTo(w * 0.9, scanY);
+    ctx.stroke();
+  }
+
+  currentDetections.forEach(det => {
+    const elapsed = now - det.startTime;
+    const progress = Math.min(elapsed / 4000, 1.0);
+
+    // Vehicle Position animates from top to bottom
+    const startY = h * 0.2;
+    const endY = h * 0.65;
+    const currY = startY + (endY - startY) * progress;
+    const scale = 0.6 + progress * 0.5;
+
+    const boxW = 200 * scale;
+    const boxH = 120 * scale;
+    const boxX = (w - boxW) / 2 + (det.laneOffset || 0);
+
+    // Vehicle Body Representation
+    ctx.fillStyle = det.vehicleColor || '#334155';
+    ctx.beginPath();
+    ctx.roundRect(boxX + 20 * scale, currY + 10 * scale, boxW - 40 * scale, boxH - 20 * scale, 10 * scale);
+    ctx.fill();
+
+    // Windshield
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+    ctx.beginPath();
+    ctx.roundRect(boxX + 35 * scale, currY + 25 * scale, boxW - 70 * scale, 30 * scale, 6 * scale);
+    ctx.fill();
+
+    // Vehicle Bounding Box (Vibrant Green)
+    ctx.strokeStyle = '#10b981';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(boxX, currY, boxW, boxH);
+
+    // Vehicle Label Tag (Top-Left of Box)
+    ctx.fillStyle = '#10b981';
+    ctx.fillRect(boxX, currY - 20, 140 * scale, 20);
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `bold ${Math.round(11 * scale)}px sans-serif`;
+    ctx.fillText(`${det.vehicleType || 'Car'}: ${(det.confidence || 0.95) * 100}%`, boxX + 6, currY - 5);
+
+    // License Plate Bounding Box (Gold / Amber)
+    const plateW = 90 * scale;
+    const plateH = 24 * scale;
+    const plateX = boxX + (boxW - plateW) / 2;
+    const plateY = currY + boxH - 28 * scale;
+
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(plateX, plateY, plateW, plateH);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(plateX, plateY, plateW, plateH);
+
+    // Plate String OCR Label
+    ctx.fillStyle = '#f59e0b';
+    ctx.font = `bold ${Math.round(11 * scale)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(det.plateText, plateX + plateW / 2, plateY + plateH - 6);
+    ctx.textAlign = 'start';
+  });
+
+  requestAnimationFrame(renderCctvFrame);
+}
+
+function triggerCctvDetection(eventData) {
+  const det = {
+    startTime: Date.now(),
+    plateText: eventData.plate_text,
+    vehicleType: eventData.vehicle_type || 'Car',
+    confidence: eventData.confidence || 0.95,
+    speed: eventData.speed_estimate_kmh || 55.0,
+    vehicleColor: eventData.vehicle_color === 'Silver' ? '#94a3b8' : 
+                 (eventData.vehicle_color === 'Black' ? '#0f172a' :
+                 (eventData.vehicle_color === 'Red' ? '#dc2626' : 
+                 (eventData.vehicle_color === 'Blue' ? '#2563eb' : '#cbd5e1'))),
+    laneOffset: (Math.random() - 0.5) * 80
+  };
+
+  currentDetections.unshift(det);
+  if (currentDetections.length > 3) currentDetections.pop();
+
+  // Add to Phase 1 Table
+  appendLiveAnprRow(eventData);
+}
+
+async function loadLiveAnprTable() {
+  try {
+    const res = await fetch('/api/events?limit=15');
+    if (res.ok) {
+      const data = await res.json();
+      const events = data.events || data;
+      const tbody = document.getElementById('live-anpr-table-body');
+      if (tbody) {
+        tbody.innerHTML = '';
+        events.forEach(e => appendLiveAnprRow(e));
+      }
+    }
+  } catch (err) {
+    console.error('Error loading ANPR table:', err);
+  }
+}
+
+function appendLiveAnprRow(eventData) {
+  const tbody = document.getElementById('live-anpr-table-body');
+  if (!tbody) return;
+
+  const tr = document.createElement('tr');
+  tr.style.borderBottom = '1px solid rgba(148, 163, 184, 0.1)';
+  tr.style.transition = 'background 0.2s';
+
+  const timeStr = eventData.timestamp 
+    ? new Date(eventData.timestamp).toTimeString().split(' ')[0] 
+    : new Date().toTimeString().split(' ')[0];
+
+  const camName = eventData.camera_name || `CAM-${String(eventData.camera_id || 1).padStart(3, '0')}`;
+  const confPct = Math.round((eventData.confidence || 0.95) * 100);
+  const isFlagged = eventData.plate_text === 'OD02AB1234';
+
+  tr.innerHTML = `
+    <td style="padding:8px 10px; font-family:monospace; color:#cbd5e1;">${timeStr}</td>
+    <td style="padding:8px 10px; font-weight:700; color:#38bdf8;">${camName}</td>
+    <td style="padding:8px 10px; color:#e2e8f0;">${eventData.vehicle_type || 'Car'}</td>
+    <td style="padding:8px 10px;">
+      <span style="font-family:monospace; font-weight:800; padding:2px 6px; border-radius:4px; ${isFlagged ? 'background:rgba(239,68,68,0.25); color:#fca5a5; border:1px solid #ef4444;' : 'background:rgba(15,23,42,0.8); color:#f59e0b; border:1px solid rgba(245,158,11,0.4);'}">
+        ${eventData.plate_text}
+      </span>
+    </td>
+    <td style="padding:8px 10px; font-weight:700; color:#10b981;">${confPct}%</td>
+    <td style="padding:8px 10px; color:#94a3b8;">${eventData.speed_estimate_kmh ? eventData.speed_estimate_kmh + ' km/h' : '52 km/h'}</td>
+  `;
+
+  if (tbody.firstChild) {
+    tbody.insertBefore(tr, tbody.firstChild);
+  } else {
+    tbody.appendChild(tr);
+  }
+
+  // Cap at 25 rows
+  while (tbody.children.length > 25) {
+    tbody.removeChild(tbody.lastChild);
+  }
+}
+
+/* -------------------------------------------------------------
+ * 15. WebSocket & Real-Time Alert Modal Handling (Phase 6)
+ * ----------------------------------------------------------- */
+function initWebSocket() {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws/live`;
+
+  let ws = null;
+  try {
+    ws = new WebSocket(wsUrl);
+  } catch (e) {
+    return;
+  }
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'detection' && msg.data) {
+        // Trigger live CCTV Canvas and Table
+        triggerCctvDetection(msg.data);
+
+        // Update HUD Counters
+        const totalHud = document.getElementById('hud-total-detections');
+        if (totalHud) {
+          totalHud.textContent = (parseInt(totalHud.textContent) || 0) + 1;
+        }
+
+        // Add to sidebar recent sightings feed
+        const feedList = document.getElementById('feed-list');
+        if (feedList) {
+          const item = createFeedItem(msg.data);
+          if (feedList.firstChild) {
+            feedList.insertBefore(item, feedList.firstChild);
+          } else {
+            feedList.appendChild(item);
+          }
+          if (feedList.children.length > 15) {
+            feedList.removeChild(feedList.lastChild);
+          }
+        }
+      } else if (msg.type === 'alert' && msg.data) {
+        incrementAlertBadge();
+        prependSlideoverAlert(msg.data);
+
+        // Check if critical blacklisted vehicle
+        if (msg.data.severity === 'CRITICAL' || msg.data.alert_type === 'FLAGGED_VEHICLE' || (msg.data.plate_text && msg.data.plate_text.toUpperCase() === 'OD02AB1234')) {
+          showBlacklistModal(msg.data);
+        } else {
+          showToast(msg.data.alert_type, msg.data.message, msg.data.severity);
+        }
+      }
+    } catch (e) {}
+  };
+
+  ws.onclose = () => {
+    setTimeout(initWebSocket, 4000);
+  };
+}
+
+function showBlacklistModal(alertData) {
+  const modal = document.getElementById('blacklist-modal');
+  if (!modal) return;
+
+  const plate = alertData.plate_text || 'OD02AB1234';
+  document.getElementById('bl-modal-plate').textContent = plate;
+  document.getElementById('bl-modal-reason').textContent = alertData.message || 'Suspected Stolen Vehicle / APB #8821';
+  document.getElementById('bl-modal-loc').textContent = `Alert Type: ${alertData.alert_type} • Sighted by Smart Surveillance`;
+
+  const trackBtn = document.getElementById('bl-modal-track-btn');
+  if (trackBtn) {
+    trackBtn.onclick = () => {
+      window.location.href = `/vehicles?plate=${encodeURIComponent(plate)}`;
+    };
+  }
+
+  modal.style.display = 'flex';
+  playAlertTone();
+}
+
+function closeBlacklistModal() {
+  const modal = document.getElementById('blacklist-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function playAlertTone() {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(520, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.4);
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.6);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + 0.6);
+  } catch (e) {}
+}
+
+

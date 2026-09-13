@@ -53,6 +53,8 @@ class NewPlateEventRequest(BaseModel):
     plate_text: str = Field(..., min_length=2, max_length=20, description="License plate string, e.g., MH12AB9999")
     confidence: float = Field(0.95, ge=0.0, le=1.0, description="OCR confidence score")
     vehicle_type: Optional[str] = Field("Car", description="Type of vehicle (Car, Truck, Bus, Motorcycle)")
+    vehicle_color: Optional[str] = Field("White", description="Vehicle color")
+    make_model: Optional[str] = Field("Sedan", description="Make and model of vehicle")
     direction: Optional[str] = Field("Northbound", description="Direction of vehicle travel")
     speed_estimate_kmh: Optional[float] = Field(None, ge=0.0, le=300.0, description="Estimated vehicle speed in km/h")
     timestamp: Optional[datetime.datetime] = Field(None, description="Detection timestamp (defaults to current UTC time)")
@@ -62,11 +64,12 @@ class NewPlateEventRequest(BaseModel):
 def create_plate_event(req: NewPlateEventRequest):
     """
     Registers a new vehicle plate sighting event in the database,
-    checks for speed/geofence alerts, and broadcasts to live WebSockets.
+    checks for speed/geofence/blacklist alerts, and broadcasts to live WebSockets.
     """
     session = get_session()
     try:
         from database.models import Camera
+        from backend.services.alert_service import AlertService
         cam = session.query(Camera).filter(Camera.id == req.camera_id).first()
         if not cam:
             raise HTTPException(status_code=404, detail=f"Camera with ID {req.camera_id} not found.")
@@ -80,7 +83,9 @@ def create_plate_event(req: NewPlateEventRequest):
             confidence=round(req.confidence, 3),
             timestamp=event_time,
             vehicle_type=req.vehicle_type or "Car",
-            direction=req.direction or "Northbound",
+            vehicle_color=req.vehicle_color or "White",
+            make_model=req.make_model or "Sedan",
+            direction=req.direction or cam.direction or "Northbound",
             speed_estimate_kmh=req.speed_estimate_kmh
         )
         session.add(event)
@@ -97,15 +102,29 @@ def create_plate_event(req: NewPlateEventRequest):
         except Exception as te:
             print(f"[Trajectory Update Warning] {te}")
 
+        # Check blacklist and route alerts
+        created_alerts = []
+        try:
+            alert_svc = AlertService(session)
+            bl_alert = alert_svc.check_blacklist_match(clean_plate, cam.id, cam.name)
+            if bl_alert:
+                created_alerts.append(bl_alert)
+            sp_alert = alert_svc.check_suspicious_route(clean_plate, cam.id, req.speed_estimate_kmh)
+            if sp_alert:
+                created_alerts.append(sp_alert)
+        except Exception as ae:
+            print(f"[Alert Check Warning] {ae}")
+
         # Broadcast via WebSocket if connected clients exist
         try:
             from backend.services.websocket_manager import ws_manager
             import asyncio
-            # Broadcast asynchronously if event loop is running
             try:
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     asyncio.create_task(ws_manager.broadcast_event(event_dict))
+                    for alert in created_alerts:
+                        asyncio.create_task(ws_manager.broadcast_alert(alert))
             except Exception:
                 pass
         except Exception:

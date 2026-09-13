@@ -26,24 +26,21 @@ class CreateAlertRequest(BaseModel):
 
 
 @router.get("")
+@router.get("/active")
 def get_alerts(
     limit: int = Query(50, ge=1, le=200),
     acknowledged: Optional[bool] = Query(None),
 ):
-    """Get alerts. If acknowledged param specified, returns list; otherwise returns dict with alerts and unread count."""
+    """Get alerts. If acknowledged param specified or /active called, returns active alerts."""
     session = get_session()
     try:
         service = AlertService(session)
-        if acknowledged is False or acknowledged is None:
-            alerts = service.get_active_alerts(limit=limit)
-        else:
-            alerts = service.get_alert_history(limit=limit)
-
+        alerts = service.get_active_alerts(limit=limit)
         unread = service.get_unread_count()
         # If explicitly filtered by acknowledged status, return the array
         if acknowledged is not None:
             return alerts
-        return {"alerts": alerts, "unread_count": unread}
+        return alerts
     finally:
         session.close()
 

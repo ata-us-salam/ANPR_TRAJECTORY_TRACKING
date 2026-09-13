@@ -22,6 +22,7 @@ from backend.api.alerts import router as alerts_router
 from backend.api.export import router as export_router
 from backend.api.geofence import router as geofence_router
 from backend.api.websocket import router as websocket_router
+from backend.api.vehicles import router as vehicles_router
 
 
 @asynccontextmanager
@@ -100,6 +101,7 @@ app.include_router(inference_router, prefix="/api")
 app.include_router(alerts_router, prefix="/api")
 app.include_router(export_router, prefix="/api")
 app.include_router(geofence_router, prefix="/api")
+app.include_router(vehicles_router, prefix="/api")
 
 # WebSocket router (mounted at root level, paths are /ws/*)
 app.include_router(websocket_router)
@@ -138,6 +140,30 @@ if os.path.exists(FRONTEND_DIR):
         if os.path.exists(map_file):
             return FileResponse(map_file)
         return {"message": "Advanced map page not yet created."}
+
+    # Serve dedicated vehicles intelligence portal
+    @app.get("/vehicles")
+    def serve_vehicles():
+        vehicles_file = os.path.join(FRONTEND_DIR, "vehicles", "index.html")
+        if os.path.exists(vehicles_file):
+            return FileResponse(vehicles_file)
+        return {"message": "Vehicles portal not yet created."}
+
+    # Serve dedicated camera registry portal
+    @app.get("/cameras")
+    def serve_cameras():
+        cameras_file = os.path.join(FRONTEND_DIR, "cameras", "index.html")
+        if os.path.exists(cameras_file):
+            return FileResponse(cameras_file)
+        return {"message": "Cameras page not yet created."}
+
+    # Serve dedicated alert stream portal
+    @app.get("/alerts")
+    def serve_alerts():
+        alerts_file = os.path.join(FRONTEND_DIR, "alerts", "index.html")
+        if os.path.exists(alerts_file):
+            return FileResponse(alerts_file)
+        return {"message": "Alerts page not yet created."}
 
     @app.get("/")
     def serve_frontend_index():

@@ -67,7 +67,8 @@ def run_production_tests():
     plates = plates_res.json()
     assert len(plates) <= 5, f"Expected max 5 results, got {len(plates)}"
 
-    all_trajs = client.get("/api/trajectories/all?limit=50").json()
+    trajs_res = client.get("/api/trajectories/all?limit=50").json()
+    all_trajs = trajs_res.get("trajectories", trajs_res if isinstance(trajs_res, list) else [])
     for t in all_trajs:
         speed = t.get("avg_speed_kmh", 0)
         assert 0.0 <= speed <= 250.0, f"Speed out of realistic physical bounds: {speed} km/h for plate {t.get('plate_text')}"

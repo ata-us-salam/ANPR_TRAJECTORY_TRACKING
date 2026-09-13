@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Security Alerts & Blacklist Operations — CITYSURV</title>
+  <meta name="description" content="Real-time security alert dispatch, blacklisted vehicle tracking, and suspicious route anomaly monitoring.">
+
+  <!-- Shared base styles -->
+  <link rel="stylesheet" href="/static/style.css">
+
+  <style>
+    :root {
+      --bg-dark: #0a0f1d;
+      --card-bg: rgba(16, 24, 45, 0.75);
+      --card-border: rgba(59, 130, 246, 0.2);
+      --accent-cyan: #06b6d4;
+      --accent-blue: #3b82f6;
+      --accent-gold: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-green: #10b981;
+    }
+
+    body {
+      background: radial-gradient(circle at 50% 10%, #132247 0%, var(--bg-dark) 100%);
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 24px;
+      background: rgba(10, 15, 29, 0.9);
+      border-bottom: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      font-size: 24px;
+      background: linear-gradient(135deg, #ef4444, #f59e0b);
+      border-radius: 8px;
+      padding: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #fff;
+    }
+
+    .brand-badge {
+      font-size: 10px;
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      padding: 2px 8px;
+      border-radius: 12px;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+      margin-left: 6px;
+      font-weight: 600;
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 8px;
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn.active {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+
+    .page-container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 1024px) {
+      .layout-grid { grid-template-columns: 1fr; }
+    }
+
+    .panel-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 22px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(10px);
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      padding-bottom: 14px;
+      margin-bottom: 18px;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 800;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Form styling */
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-label {
+      font-size: 12px;
+      font-weight: 700;
+      color: #94a3b8;
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .form-input {
+      width: 100%;
+      box-sizing: border-box;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+
+    .form-input:focus {
+      border-color: #ef4444;
+    }
+
+    .submit-flag-btn {
+      width: 100%;
+      background: linear-gradient(135deg, #dc2626, #b91c1c);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .submit-flag-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4);
+    }
+
+    /* Blacklisted vehicle list */
+    .flagged-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 10px;
+    }
+
+    .flagged-plate {
+      font-family: monospace;
+      font-weight: 800;
+      font-size: 15px;
+      color: #fca5a5;
+    }
+
+    .unflag-btn {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #94a3b8;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .unflag-btn:hover {
+      background: rgba(239, 68, 68, 0.2);
+      border-color: #ef4444;
+      color: #fff;
+    }
+
+    /* Alert cards stream */
+    .alert-stream-item {
+      background: rgba(15, 23, 42, 0.7);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+      border-left: 4px solid #3b82f6;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      transition: transform 0.15s;
+    }
+
+    .alert-stream-item:hover {
+      transform: translateX(4px);
+    }
+
+    .alert-critical {
+      border-left-color: #ef4444;
+      background: rgba(239, 68, 68, 0.12);
+      border-right: 1px solid rgba(239, 68, 68, 0.25);
+      border-top: 1px solid rgba(239, 68, 68, 0.25);
+      border-bottom: 1px solid rgba(239, 68, 68, 0.25);
+    }
+
+    .alert-warning {
+      border-left-color: #f59e0b;
+      background: rgba(245, 158, 11, 0.1);
+      border-right: 1px solid rgba(245, 158, 11, 0.2);
+      border-top: 1px solid rgba(245, 158, 11, 0.2);
+      border-bottom: 1px solid rgba(245, 158, 11, 0.2);
+    }
+
+    .alert-badge-tag {
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 6px;
+      display: inline-block;
+      margin-bottom: 6px;
+    }
+
+    .tag-critical {
+      background: rgba(239, 68, 68, 0.25);
+      color: #fca5a5;
+    }
+
+    .tag-warning {
+      background: rgba(245, 158, 11, 0.25);
+      color: #fcd34d;
+    }
+
+    .ack-btn {
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #60a5fa;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+
+    .ack-btn:hover {
+      background: rgba(59, 130, 246, 0.3);
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-icon">🚨</div>
+      <div>
+        <div class="brand-title">
+          CITYSURV <span style="font-weight:300; opacity:0.8;">// ALERT DISPATCH</span>
+          <span class="brand-badge">SIH SECURITY ENGINE</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="nav-tabs">
+      <a href="/" class="tab-btn"><span>🗺️</span> Live ANPR</a>
+      <a href="/vehicles" class="tab-btn"><span>🚗</span> Vehicles</a>
+      <a href="/cameras" class="tab-btn"><span>📹</span> Camera Grid</a>
+      <a href="/alerts" class="tab-btn active"><span>🚨</span> Alerts</a>
+      <a href="/dashboard" class="tab-btn"><span>📊</span> Analytics</a>
+      <a href="/map" class="tab-btn"><span>🌐</span> GIS Replay</a>
+    </nav>
+
+    <div style="display:flex; align-items:center; gap:10px;">
+      <button id="ack-all-btn" class="ack-btn" style="border-color:#10b981; color:#34d399; background:rgba(16,185,129,0.15);">
+        <span>✓</span> Acknowledge All
+      </button>
+      <div id="live-indicator" style="display:inline-flex; align-items:center; gap:6px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.5); color:#f87171; font-size:11px; font-weight:700; padding:5px 12px; border-radius:20px;">
+        <span style="width:8px; height:8px; background:#ef4444; border-radius:50%; box-shadow:0 0 8px #ef4444;"></span>
+        DISPATCH ARMED
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <div class="layout-grid">
+      <!-- Left: Blacklist Manager -->
+      <aside>
+        <div class="panel-card" style="margin-bottom:24px;">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>🚫</span> Add Vehicle to Watchlist
+            </div>
+          </div>
+
+          <form id="flag-form">
+            <div class="form-group">
+              <label class="form-label">License Plate Number</label>
+              <input type="text" id="flag-plate-input" class="form-input" placeholder="e.g. OD02AB1234" required />
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Reason for Flagging / APB</label>
+              <input type="text" id="flag-reason-input" class="form-input" placeholder="e.g. Suspected Stolen / Criminal APB" required />
+            </div>
+
+            <button type="submit" class="submit-flag-btn">
+              <span>🚨</span> ARM WATCHLIST TARGET
+            </button>
+          </form>
+        </div>
+
+        <!-- Active Flagged Registry -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>📋</span> Active Blacklisted Plates
+            </div>
+            <span id="flag-count-badge" style="font-size:11px; background:rgba(239,68,68,0.2); color:#fca5a5; padding:2px 8px; border-radius:10px; font-weight:700;">0 active</span>
+          </div>
+
+          <div id="flagged-list-container">
+            <!-- Dynamic items -->
+          </div>
+        </div>
+      </aside>
+
+      <!-- Right: Real-time Alert Stream -->
+      <section>
+        <div class="panel-card">
+          <div class="panel-header">
+            <div class="panel-title">
+              <span>📡</span> Live Surveillance Alert Stream
+            </div>
+            <span style="font-size:12px; color:#94a3b8;">
+              Unacknowledged: <strong id="unread-count" style="color:#ef4444;">0</strong>
+            </span>
+          </div>
+
+          <div id="alert-stream-container">
+            <div style="padding:40px; text-align:center; color:#64748b;">Listening for smart city infractions...</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <script src="/static/alerts/alerts.js"></script>
+</body>
+</html>

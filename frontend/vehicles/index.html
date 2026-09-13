@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vehicle Intelligence & Trajectory Search — CITYSURV</title>
+  <meta name="description" content="Vehicle search, detailed intelligence profile, and chronological multi-camera trajectory tracking.">
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Shared base styles -->
+  <link rel="stylesheet" href="/static/style.css">
+
+  <style>
+    :root {
+      --bg-dark: #0a0f1d;
+      --card-bg: rgba(16, 24, 45, 0.75);
+      --card-border: rgba(59, 130, 246, 0.2);
+      --accent-cyan: #06b6d4;
+      --accent-blue: #3b82f6;
+      --accent-gold: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-green: #10b981;
+    }
+
+    body {
+      background: radial-gradient(circle at 50% 10%, #132247 0%, var(--bg-dark) 100%);
+      color: #e2e8f0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif;
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+
+    .app-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 24px;
+      background: rgba(10, 15, 29, 0.9);
+      border-bottom: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      font-size: 24px;
+      background: linear-gradient(135deg, #06b6d4, #3b82f6);
+      border-radius: 8px;
+      padding: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #fff;
+    }
+
+    .brand-badge {
+      font-size: 10px;
+      background: rgba(59, 130, 246, 0.2);
+      color: #60a5fa;
+      padding: 2px 8px;
+      border-radius: 12px;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+      margin-left: 6px;
+      font-weight: 600;
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 14px;
+      border-radius: 8px;
+      color: #94a3b8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .tab-btn:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .tab-btn.active {
+      color: #38bdf8;
+      background: rgba(56, 189, 248, 0.12);
+      border-color: rgba(56, 189, 248, 0.3);
+    }
+
+    .page-container {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    /* Search Bar section */
+    .search-hero-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(10px);
+      margin-bottom: 24px;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .plate-search-input {
+      flex: 1;
+      background: rgba(15, 23, 42, 0.8);
+      border: 2px solid rgba(59, 130, 246, 0.4);
+      border-radius: 10px;
+      padding: 14px 20px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #38bdf8;
+      outline: none;
+      transition: all 0.2s;
+    }
+
+    .plate-search-input:focus {
+      border-color: #38bdf8;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.3);
+    }
+
+    .search-action-btn {
+      background: linear-gradient(135deg, #0284c7, #2563eb);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 14px 28px;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+
+    .search-action-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+    }
+
+    .quick-plate-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+      align-items: center;
+    }
+
+    .quick-tag-label {
+      font-size: 12px;
+      color: #94a3b8;
+      font-weight: 600;
+      margin-right: 4px;
+    }
+
+    .quick-tag {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #cbd5e1;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .quick-tag:hover {
+      background: rgba(59, 130, 246, 0.2);
+      border-color: #3b82f6;
+      color: #fff;
+    }
+
+    .quick-tag.blacklisted {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: rgba(239, 68, 68, 0.4);
+      color: #fca5a5;
+    }
+
+    .quick-tag.blacklisted:hover {
+      background: rgba(239, 68, 68, 0.3);
+      border-color: #ef4444;
+      color: #fff;
+    }
+
+    /* Profile Header Card */
+    .profile-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 24px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+
+    .profile-main-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+      padding-bottom: 18px;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+
+    .plate-visual-badge {
+      display: inline-flex;
+      align-items: center;
+      background: #111827;
+      border: 2px solid #f59e0b;
+      border-radius: 8px;
+      padding: 6px 14px;
+      box-shadow: 0 0 16px rgba(245, 158, 11, 0.2);
+    }
+
+    .ind-strip {
+      color: #3b82f6;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 0.5px;
+      border-right: 1px solid rgba(255, 255, 255, 0.2);
+      padding-right: 8px;
+      margin-right: 10px;
+    }
+
+    .plate-text-large {
+      font-size: 26px;
+      font-weight: 900;
+      letter-spacing: 3px;
+      color: #f8fafc;
+      font-family: 'Courier New', monospace;
+    }
+
+    .status-badge-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 16px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+    }
+
+    .status-flagged {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid #ef4444;
+      color: #f87171;
+      animation: pulseAlert 2s infinite;
+    }
+
+    .status-clean {
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid #10b981;
+      color: #34d399;
+    }
+
+    @keyframes pulseAlert {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 15px 4px rgba(239, 68, 68, 0.4); }
+    }
+
+    /* KPI Grid */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 14px;
+    }
+
+    .kpi-chip {
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(59, 130, 246, 0.15);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .kpi-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #94a3b8;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      margin-bottom: 6px;
+    }
+
+    .kpi-val {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .kpi-sub {
+      font-size: 11px;
+      color: #64748b;
+      margin-top: 4px;
+    }
+
+    /* Content 2-Col Layout */
+    .layout-2col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 1024px) {
+      .layout-2col { grid-template-columns: 1fr; }
+    }
+
+    .panel-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+      padding-bottom: 12px;
+    }
+
+    .panel-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    #vehicle-map {
+      height: 440px;
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+
+    /* Sightings Timeline Table */
+    .table-container {
+      overflow-y: auto;
+      max-height: 440px;
+    }
+
+    .custom-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .custom-table th {
+      background: rgba(15, 23, 42, 0.8);
+      color: #94a3b8;
+      font-weight: 700;
+      text-align: left;
+      padding: 10px 12px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+    }
+
+    .custom-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+      color: #cbd5e1;
+    }
+
+    .custom-table tr:hover {
+      background: rgba(59, 130, 246, 0.08);
+    }
+
+    .seq-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #0284c7;
+      color: #fff;
+      font-weight: 800;
+      font-size: 11px;
+    }
+
+    .speed-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    .speed-high {
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+    }
+
+    .speed-normal {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+    }
+
+    .empty-state {
+      padding: 40px;
+      text-align: center;
+      color: #64748b;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-icon">🚗</div>
+      <div>
+        <div class="brand-title">
+          CITYSURV <span style="font-weight:300; opacity:0.8;">// VEHICLE INTELLIGENCE</span>
+          <span class="brand-badge">TRAJECTORY SEARCH</span>
+        </div>
+      </div>
+    </div>
+
+    <nav class="nav-tabs">
+      <a href="/" class="tab-btn"><span>🗺️</span> Live ANPR</a>
+      <a href="/vehicles" class="tab-btn active"><span>🚗</span> Vehicles</a>
+      <a href="/cameras" class="tab-btn"><span>📹</span> Camera Grid</a>
+      <a href="/alerts" class="tab-btn"><span>🚨</span> Alerts</a>
+      <a href="/dashboard" class="tab-btn"><span>📊</span> Analytics</a>
+      <a href="/map" class="tab-btn"><span>🌐</span> GIS Replay</a>
+    </nav>
+
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div id="live-indicator" style="display:inline-flex; align-items:center; gap:6px; background:rgba(16,185,129,0.12); border:1px solid rgba(16,185,129,0.5); color:#10b981; font-size:11px; font-weight:700; padding:5px 12px; border-radius:20px;">
+        <span style="width:8px; height:8px; background:#10b981; border-radius:50%; box-shadow:0 0 8px #10b981;"></span>
+        SYSTEM ONLINE
+      </div>
+    </div>
+  </header>
+
+  <main class="page-container">
+    <!-- Search Hero Card -->
+    <section class="search-hero-card">
+      <div class="search-row">
+        <input 
+          type="text" 
+          id="plate-input" 
+          class="plate-search-input" 
+          placeholder="ENTER LICENSE PLATE (E.G. OD02AB1234)..."
+          value="OD02AB1234"
+        />
+        <button id="search-btn" class="search-action-btn" type="button">
+          <span>🔍</span> Track Trajectory
+        </button>
+      </div>
+
+      <div class="quick-plate-tags">
+        <span class="quick-tag-label">QUICK TARGETS:</span>
+        <button class="quick-tag blacklisted" onclick="searchPlate('OD02AB1234')">🚨 OD02AB1234 (Blacklisted Target)</button>
+        <button class="quick-tag" onclick="searchPlate('OD05XY9087')">🏍️ OD05XY9087 (Motorcycle)</button>
+        <button class="quick-tag" onclick="searchPlate('OD02CA9999')">🚙 OD02CA9999 (SUV)</button>
+        <button class="quick-tag" onclick="searchPlate('OD02EE8820')">⚡ OD02EE8820 (Speed Anomaly)</button>
+        <button class="quick-tag" onclick="searchPlate('OD33BT8833')">🚌 OD33BT8833 (City Bus)</button>
+        <button class="quick-tag" onclick="searchPlate('OD14AK7710')">🚛 OD14AK7710 (Truck)</button>
+      </div>
+    </section>
+
+    <!-- Target Vehicle Intelligence Profile Card -->
+    <section id="profile-section" class="profile-card">
+      <div class="profile-main-bar">
+        <div style="display:flex; align-items:center; gap:16px;">
+          <div class="plate-visual-badge">
+            <span class="ind-strip">IND</span>
+            <span class="plate-text-large" id="prof-plate-text">OD02AB1234</span>
+          </div>
+          <div>
+            <div id="prof-status-chip" class="status-badge-chip status-flagged">
+              <span>🚨 BLACKLISTED / FLAGGED</span>
+            </div>
+            <div id="prof-flag-reason" style="font-size:12px; color:#fca5a5; margin-top:4px; font-weight:600;">
+              Reason: Suspected Stolen Vehicle / APB #8821
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex; gap:12px; align-items:center;">
+          <div style="text-align:right;">
+            <div style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-weight:700;">Reconstructed Corridor</div>
+            <div id="prof-corridor" style="font-size:14px; font-weight:800; color:#38bdf8;">Rasulgarh → Patia</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPI Summary -->
+      <div class="kpi-grid">
+        <div class="kpi-chip">
+          <div class="kpi-label">Vehicle Classification</div>
+          <div class="kpi-val" id="prof-vtype">Car / Sedan</div>
+          <div class="kpi-sub" id="prof-color">Color: Silver</div>
+        </div>
+
+        <div class="kpi-chip">
+          <div class="kpi-label">Total Sightings</div>
+          <div class="kpi-val" id="prof-detections" style="color:#38bdf8;">0</div>
+          <div class="kpi-sub">Across smart city grid</div>
+        </div>
+
+        <div class="kpi-chip">
+          <div class="kpi-label">Checkpoints Visited</div>
+          <div class="kpi-val" id="prof-checkpoints" style="color:#a855f7;">0 Cams</div>
+          <div class="kpi-sub">Unique camera nodes</div>
+        </div>
+
+        <div class="kpi-chip">
+          <div class="kpi-label">Speed Metrics</div>
+          <div class="kpi-val" id="prof-avg-speed">-- km/h</div>
+          <div class="kpi-sub" id="prof-peak-speed">Peak: -- km/h</div>
+        </div>
+
+        <div class="kpi-chip">
+          <div class="kpi-label">First Detected</div>
+          <div class="kpi-val" id="prof-first-seen" style="font-size:14px;">--</div>
+          <div class="kpi-sub" id="prof-first-cam">--</div>
+        </div>
+
+        <div class="kpi-chip">
+          <div class="kpi-label">Last Detected</div>
+          <div class="kpi-val" id="prof-last-seen" style="font-size:14px; color:#10b981;">--</div>
+          <div class="kpi-sub" id="prof-last-cam">--</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2-Column Trajectory Route & Detection Timeline -->
+    <div class="layout-2col">
+      <!-- Trajectory GIS Map -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>🗺️</span> Reconstructed Camera Trajectory
+          </div>
+          <span style="font-size:12px; color:#94a3b8;" id="map-point-count">0 checkpoints</span>
+        </div>
+        <div id="vehicle-map"></div>
+      </div>
+
+      <!-- Chronological Sightings Timeline -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span>⏱️</span> Chronological Sighting History
+          </div>
+          <span style="font-size:11px; background:rgba(59,130,246,0.15); color:#60a5fa; padding:3px 8px; border-radius:10px;">
+            REAL-TIME DB AUDIT
+          </span>
+        </div>
+        <div class="table-container">
+          <table class="custom-table">
+            <thead>
+              <tr>
+                <th style="width:40px;">#</th>
+                <th>Time (UTC)</th>
+                <th>Camera Node</th>
+                <th>Speed</th>
+                <th>Heading</th>
+                <th>Conf</th>
+              </tr>
+            </thead>
+            <tbody id="timeline-tbody">
+              <tr>
+                <td colspan="6" class="empty-state">Loading vehicle intelligence records...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Alerts Section -->
+    <section class="panel-card" style="margin-bottom:40px;">
+      <div class="panel-header">
+        <div class="panel-title">
+          <span>🚨</span> Associated Security & Speed Alerts
+        </div>
+      </div>
+      <div id="alerts-container">
+        <div class="empty-state">No security infractions logged for this vehicle.</div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/static/vehicles/vehicles.js"></script>
+</body>
+</html>

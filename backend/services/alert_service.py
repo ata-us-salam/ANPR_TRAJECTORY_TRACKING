@@ -21,6 +21,7 @@ class AlertType(str, Enum):
     GEOFENCE_BREACH = "GEOFENCE_BREACH"
     FLAGGED_VEHICLE = "FLAGGED_VEHICLE"
     CAMERA_OFFLINE = "CAMERA_OFFLINE"
+    SUSPICIOUS_ROUTE = "SUSPICIOUS_ROUTE"
 
 
 class AlertService:
@@ -194,3 +195,40 @@ class AlertService:
             self.session.commit()
             return True
         return False
+
+    def check_blacklist_match(
+        self, plate_text: str, camera_id: int = None, camera_name: str = None
+    ) -> Optional[dict]:
+        """Check if sighted vehicle is blacklisted and create a CRITICAL alert immediately."""
+        fv = (
+            self.session.query(FlaggedVehicle)
+            .filter(FlaggedVehicle.plate_text == plate_text.upper(), FlaggedVehicle.active == True)
+            .first()
+        )
+        if fv:
+            loc = camera_name or (f"Camera #{camera_id}" if camera_id else "Smart City Grid")
+            msg = f"🚨 BLACKLISTED VEHICLE DETECTED: {plate_text.upper()} at {loc}! Flag reason: {fv.reason}"
+            return self.create_alert(
+                alert_type=AlertType.FLAGGED_VEHICLE,
+                severity=AlertSeverity.CRITICAL,
+                message=msg,
+                plate_text=plate_text.upper(),
+                camera_id=camera_id,
+            )
+        return None
+
+    def check_suspicious_route(
+        self, plate_text: str, current_camera_id: int, speed_kmh: float = None
+    ) -> Optional[dict]:
+        """Detect route anomalies such as severe overspeeding or impossible transit."""
+        if speed_kmh and speed_kmh > 105.0:
+            msg = f"⚡ SEVERE SPEED ANOMALY: Vehicle {plate_text.upper()} clocked at {speed_kmh:.1f} km/h (Limit: 60 km/h)!"
+            return self.create_alert(
+                alert_type=AlertType.SPEED_ANOMALY,
+                severity=AlertSeverity.CRITICAL if speed_kmh > 120 else AlertSeverity.WARNING,
+                message=msg,
+                plate_text=plate_text.upper(),
+                camera_id=current_camera_id,
+            )
+        return None
+

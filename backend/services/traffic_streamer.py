@@ -14,43 +14,46 @@ from backend.services.alert_service import AlertService
 from backend.services.geofence_service import GeofenceService
 from backend.services.websocket_manager import ws_manager
 
-# Real Indian license plates from the actual dataset & city corridors
+# Bhubaneswar Smart City Corridors across Connected Arterials
 CORRIDOR_CAMERAS = [
-    # Route 1: North-South Ring Road (Connaught Place -> Mandi House -> India Gate -> AIIMS -> DND)
-    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-    # Route 2: East-West Arterial Corridor (DND Flyway -> Ashram -> AIIMS -> Dhaula Kuan -> Airport)
-    [10, 9, 8, 7, 6, 11, 12],
-    # Route 3: Central Loop (CP -> Barakhamba -> Mandi House -> India Gate -> CP)
-    [1, 2, 3, 4, 1],
-    # Route 4: Ring Road Expressway (AIIMS -> South Ext -> Lajpat Nagar -> Ashram -> DND)
-    [6, 7, 8, 9, 10],
-    # Route 5: Airport Express Corridor (CP -> India Gate -> AIIMS -> Dhaula Kuan -> Airport)
-    [1, 4, 6, 11, 12]
+    # Corridor 0: Rasulgarh -> Vani Vihar -> Acharya Vihar -> Jaydev Vihar -> Chandrasekharpur -> Patia -> KIIT -> Infocity
+    [1, 2, 3, 4, 8, 9, 10, 11],
+    # Corridor 1: Baramunda -> Jaydev Vihar -> Acharya Vihar -> Vani Vihar -> Rasulgarh
+    [12, 4, 3, 2, 1],
+    # Corridor 2: Master Canteen -> Kalpana -> Khandagiri -> Baramunda
+    [6, 7, 5, 12],
+    # Corridor 3: North Corridor: Chandrasekharpur -> Patia -> KIIT -> Infocity
+    [8, 9, 10, 11],
+    # Corridor 4: South-North Trunk: Khandagiri -> Baramunda -> Jaydev Vihar -> Patia
+    [5, 12, 4, 8, 9, 10],
+    # Corridor 5: Reverse Infocity -> Patia -> Jaydev Vihar -> Rasulgarh
+    [11, 10, 9, 8, 4, 3, 1]
 ]
 
 REAL_INDIAN_PLATES = [
-    {"plate": "DL01CA9999", "type": "Car", "base_speed": 62.0},
-    {"plate": "MH12AB4325", "type": "Truck", "base_speed": 45.0},
-    {"plate": "OD02AB1234", "type": "Car", "base_speed": 55.0},
-    {"plate": "KA05MJ4012", "type": "Car", "base_speed": 58.0},
-    {"plate": "HR26DQ5521", "type": "Truck", "base_speed": 40.0},
-    {"plate": "UP16BT8833", "type": "Bus", "base_speed": 48.0},
-    {"plate": "DL3SCK4419", "type": "Motorcycle", "base_speed": 52.0},
-    {"plate": "MH02EE8820", "type": "Car", "base_speed": 82.0}, # Speed anomaly
-    {"plate": "WB12AB1234", "type": "Car", "base_speed": 56.0},
-    {"plate": "TS09FA8080", "type": "Car", "base_speed": 60.0},
-    {"plate": "GJ01ZZ9090", "type": "Car", "base_speed": 64.0},
-    {"plate": "TN07CK1212", "type": "Car", "base_speed": 57.0},
-    {"plate": "CH01BL3344", "type": "Car", "base_speed": 88.0}, # Speed anomaly
-    {"plate": "RJ14CA2201", "type": "Bus", "base_speed": 42.0},
-    {"plate": "DL8CAF3021", "type": "Car", "base_speed": 54.0},
-    {"plate": "UP14DR1102", "type": "Car", "base_speed": 66.0},
+    {"plate": "OD02AB1234", "type": "Car", "color": "Silver", "make": "Sedan", "base_speed": 58.0}, # Blacklisted SIH target!
+    {"plate": "OD05XY9087", "type": "Motorcycle", "color": "Black", "make": "Bike", "base_speed": 52.0},
+    {"plate": "OD02CA9999", "type": "Car", "color": "White", "make": "SUV", "base_speed": 64.0},
+    {"plate": "OD33BT8833", "type": "Bus", "color": "Blue", "make": "City Bus", "base_speed": 42.0},
+    {"plate": "OD14AK7710", "type": "Truck", "color": "Yellow", "make": "Heavy Truck", "base_speed": 38.0},
+    {"plate": "OD02EE8820", "type": "Car", "color": "Red", "make": "Sedan", "base_speed": 88.0}, # Speed anomaly
+    {"plate": "DL01CA9999", "type": "Car", "color": "White", "make": "Sedan", "base_speed": 62.0},
+    {"plate": "MH12AB4325", "type": "Truck", "color": "Dark Gray", "make": "Truck", "base_speed": 44.0},
+    {"plate": "WB12AB1234", "type": "Car", "color": "Silver", "make": "Hatchback", "base_speed": 56.0},
+    {"plate": "KA05MJ4012", "type": "Car", "color": "Black", "make": "SUV", "base_speed": 60.0},
+    {"plate": "HR26DQ5521", "type": "Truck", "color": "Brown", "make": "Truck", "base_speed": 40.0},
+    {"plate": "CH01BL3344", "type": "Car", "color": "White", "make": "Sedan", "base_speed": 92.0}, # Speed anomaly
+    {"plate": "TS09FA8080", "type": "Car", "color": "Blue", "make": "Sedan", "base_speed": 59.0},
+    {"plate": "GJ01ZZ9090", "type": "Car", "color": "White", "make": "Sedan", "base_speed": 65.0},
+    {"plate": "DL3SCK4419", "type": "Motorcycle", "color": "Black", "make": "Bike", "base_speed": 50.0},
 ]
 
 class ActiveVehicleJourney:
     def __init__(self, plate_info: dict, corridor: List[int]):
         self.plate = plate_info["plate"]
         self.v_type = plate_info["type"]
+        self.color = plate_info.get("color", "White")
+        self.make = plate_info.get("make", "Sedan")
         self.base_speed = plate_info["base_speed"]
         self.corridor = corridor
         self.current_step = 0
@@ -148,7 +151,9 @@ class CityTrafficStreamEngine:
                 confidence=conf,
                 timestamp=now,
                 vehicle_type=journey.v_type,
-                direction=direction,
+                vehicle_color=journey.color,
+                make_model=journey.make,
+                direction=cam.direction or direction,
                 speed_estimate_kmh=round(speed, 1)
             )
             session.add(event)
@@ -164,18 +169,36 @@ class CityTrafficStreamEngine:
             except Exception:
                 pass
 
-            # Check for speed anomaly alerts
+            # Alert checks
+            alert_svc = AlertService(session)
+
+            # 1. Blacklist Match Alert
             try:
-                alert_svc = AlertService(session)
-                if speed > 75.0:
-                    alert_svc.check_speed_anomalies()
+                bl_alert = alert_svc.check_blacklist_match(journey.plate, cam.id, cam.name)
+                if bl_alert:
+                    await ws_manager.broadcast_alert(bl_alert)
             except Exception:
                 pass
 
-            # Check geofences
+            # 2. Suspicious Speed / Route Anomaly Alert
+            try:
+                sp_alert = alert_svc.check_suspicious_route(journey.plate, cam.id, speed)
+                if sp_alert:
+                    await ws_manager.broadcast_alert(sp_alert)
+                elif speed > 75.0:
+                    speed_alerts = alert_svc.check_speed_anomalies()
+                    for sa in speed_alerts:
+                        await ws_manager.broadcast_alert(sa)
+            except Exception:
+                pass
+
+            # 3. Check geofences
             try:
                 geo_svc = GeofenceService(session)
-                geo_svc.check_point_in_geofences(cam.latitude, cam.longitude, journey.plate, cam.id)
+                geo_alerts = geo_svc.check_point_in_geofences(cam.latitude, cam.longitude, journey.plate, cam.id)
+                if geo_alerts:
+                    for ga in geo_alerts:
+                        await ws_manager.broadcast_alert(ga)
             except Exception:
                 pass
 

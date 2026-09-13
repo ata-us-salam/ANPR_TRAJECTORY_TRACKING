@@ -87,3 +87,69 @@ class TrafficVolumeAnalyzer:
             }
             for cid, name, loc, lat, lng, count in results
         ]
+
+    def get_congestion_status(self):
+        """
+        Calculates dynamic congestion scores for all smart city camera nodes based on:
+        - Recent volume (last 2 hours)
+        - Average speed estimate
+        - Directional camera capacity
+        Returns ranking with status 'LOW', 'MODERATE', 'HIGH'.
+        """
+        two_hours_ago = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
+        cameras = self.session.query(Camera).all()
+        
+        congestion_data = []
+        for cam in cameras:
+            recent_events = self.session.query(PlateEvent)\
+                .filter(PlateEvent.camera_id == cam.id, PlateEvent.timestamp >= two_hours_ago).all()
+            
+            recent_count = len(recent_events)
+            all_speeds = [e.speed_estimate_kmh for e in recent_events if e.speed_estimate_kmh is not None]
+            avg_speed = round(sum(all_speeds) / len(all_speeds), 1) if all_speeds else 50.0
+            
+            # Congestion logic:
+            # High count + low average speed = high congestion
+            # Estimated design capacity = 25 vehicles / hr per checkpoint
+            capacity = 25.0
+            hourly_rate = recent_count / 2.0
+            density_ratio = min(hourly_rate / capacity, 1.5)
+            
+            # Speed penalty: slow traffic (<35 km/h) on arterials
+            speed_penalty = max(0.0, (55.0 - avg_speed) / 55.0)
+            
+            score = (density_ratio * 0.6) + (speed_penalty * 0.4)
+            score = min(max(score, 0.05), 0.98)
+            
+            if score >= 0.70 or avg_speed < 30:
+                level = "HIGH"
+                badge = "🔴 HIGH"
+                color = "#ef4444"
+            elif score >= 0.40 or avg_speed < 45:
+                level = "MODERATE"
+                badge = "🟡 MODERATE"
+                color = "#f59e0b"
+            else:
+                level = "LOW"
+                badge = "🟢 LOW"
+                color = "#10b981"
+                
+            congestion_data.append({
+                "camera_id": cam.id,
+                "name": cam.name,
+                "location": cam.location_name,
+                "direction": cam.direction or "Northbound",
+                "latitude": cam.latitude,
+                "longitude": cam.longitude,
+                "status": cam.status,
+                "hourly_rate": round(hourly_rate, 1),
+                "avg_speed_kmh": avg_speed,
+                "congestion_score": round(score * 100, 1),
+                "congestion_level": level,
+                "badge": badge,
+                "color": color
+            })
+            
+        congestion_data.sort(key=lambda x: x["congestion_score"], reverse=True)
+        return congestion_data
+
