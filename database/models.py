@@ -212,17 +212,45 @@ DEFAULT_DB_URL = f"sqlite:///{DEFAULT_DB_PATH}"
 def get_db_url():
     return os.getenv("DATABASE_URL", DEFAULT_DB_URL)
 
+_GLOBAL_ENGINE = None
+_GLOBAL_SESSIONMAKER = None
+
 def get_engine(db_url=None):
+    global _GLOBAL_ENGINE
     if db_url is None:
         db_url = get_db_url()
     
+    if _GLOBAL_ENGINE is not None and str(_GLOBAL_ENGINE.url) == db_url:
+        return _GLOBAL_ENGINE
+    
     # Ensure directory exists for sqlite
     if db_url.startswith("sqlite:///"):
+        from sqlalchemy import event
         sqlite_file = db_url.replace("sqlite:///", "")
         os.makedirs(os.path.dirname(os.path.abspath(sqlite_file)), exist_ok=True)
-        return create_engine(db_url, connect_args={"check_same_thread": False})
+        engine = create_engine(
+            db_url,
+            connect_args={"check_same_thread": False, "timeout": 15},
+            pool_pre_ping=True
+        )
+        
+        @event.listens_for(engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA journal_mode=WAL")
+                cursor.execute("PRAGMA synchronous=NORMAL")
+                cursor.execute("PRAGMA busy_timeout=10000")
+                cursor.close()
+            except Exception:
+                pass
+                
+        _GLOBAL_ENGINE = engine
+        return engine
     
-    return create_engine(db_url)
+    engine = create_engine(db_url, pool_pre_ping=True)
+    _GLOBAL_ENGINE = engine
+    return engine
 
 def init_db(engine=None):
     if engine is None:
@@ -261,7 +289,9 @@ def init_db(engine=None):
     return engine
 
 def get_session(engine=None):
+    global _GLOBAL_SESSIONMAKER
     if engine is None:
         engine = get_engine()
-    Session = sessionmaker(bind=engine)
-    return Session()
+    if _GLOBAL_SESSIONMAKER is None or _GLOBAL_SESSIONMAKER.kw.get("bind") != engine:
+        _GLOBAL_SESSIONMAKER = sessionmaker(bind=engine)
+    return _GLOBAL_SESSIONMAKER()

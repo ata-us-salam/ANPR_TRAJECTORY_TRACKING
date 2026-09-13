@@ -27,12 +27,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* ── Map Initialization ── */
 function initAdvMap() {
-  const defaultCenter = [28.60, 77.22];
+  const defaultCenter = [20.3000, 85.8271];
 
   advMap = L.map('adv-map', {
     zoomControl: false,
     attributionControl: false,
-  }).setView(defaultCenter, 12);
+  }).setView(defaultCenter, 13);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -90,6 +90,10 @@ async function loadCameras() {
     const res = await fetch('/api/cameras');
     camerasData = await res.json();
     renderCameraMarkers();
+    if (camerasData.length > 0) {
+      const bounds = L.latLngBounds(camerasData.map(c => [c.latitude, c.longitude]));
+      advMap.fitBounds(bounds, { padding: [50, 50] });
+    }
   } catch (err) {
     console.error('Load cameras error:', err);
   }

@@ -28,15 +28,19 @@ class HeatmapEngine:
         cam_ids = [c.id for c in cameras]
         cam_names = [c.name for c in cameras]
 
-        # Build hour-by-camera counts
-        events = self.session.query(
-            PlateEvent.camera_id, PlateEvent.timestamp
-        ).all()
+        # Efficient SQL aggregation for hour-by-camera counts
+        h_expr = func.strftime('%H', PlateEvent.timestamp)
+        aggregated = self.session.query(
+            PlateEvent.camera_id, h_expr, func.count(PlateEvent.id)
+        ).group_by(PlateEvent.camera_id, h_expr).all()
 
         grid = defaultdict(lambda: defaultdict(int))
-        for cam_id, ts in events:
-            if ts:
-                grid[ts.hour][cam_id] += 1
+        for cam_id, h_str, count in aggregated:
+            if h_str is not None:
+                try:
+                    grid[int(h_str)][cam_id] = count
+                except (ValueError, TypeError):
+                    pass
 
         hours = [f"{h:02d}:00" for h in range(24)]
         matrix = []
@@ -60,11 +64,16 @@ class HeatmapEngine:
         Identifies peak traffic hours and categorizes them into time bands.
         Returns hourly volumes with morning/afternoon/evening/night classification.
         """
-        events = self.session.query(PlateEvent.timestamp).all()
+        h_expr = func.strftime('%H', PlateEvent.timestamp)
+        hourly_data = self.session.query(h_expr, func.count(PlateEvent.id))\
+                                  .group_by(h_expr).all()
         hourly = defaultdict(int)
-        for (ts,) in events:
-            if ts:
-                hourly[ts.hour] += 1
+        for h_str, count in hourly_data:
+            if h_str is not None:
+                try:
+                    hourly[int(h_str)] = count
+                except (ValueError, TypeError):
+                    pass
 
         bands = {
             "night": (0, 6),

@@ -24,32 +24,73 @@ def list_tracked_plates(limit: int = Query(100, ge=1, le=500)):
     finally:
         session.close()
 
-@router.get("/search")
-def search_trajectory(plate: str = Query(..., min_length=2, max_length=20, description="Vehicle license plate to track")):
-    cleaned_plate = plate.strip().upper()
+@router.get("/suggest")
+def suggest_plates(q: str = Query("", max_length=20, description="Query prefix or substring for plate autocomplete")):
+    """Provide real-time plate autocomplete suggestions for the search bar."""
     session = get_session()
     try:
-        # Check if precomputed trajectory exists
+        cleaned = q.strip().upper().replace(" ", "").replace("-", "")
+        query = session.query(Trajectory.plate_text, Trajectory.total_cameras, Trajectory.distance_km)
+        if cleaned:
+            query = query.filter(Trajectory.plate_text.like(f"%{cleaned}%"))
+        results = query.order_by(Trajectory.total_cameras.desc()).limit(15).all()
+        return [
+            {
+                "plate_text": r[0],
+                "total_cameras": r[1],
+                "distance_km": round(r[2], 1) if r[2] else 0.0
+            }
+            for r in results
+        ]
+    finally:
+        session.close()
+
+@router.get("/search")
+def search_trajectory(plate: str = Query(..., min_length=2, max_length=30, description="Vehicle license plate to track")):
+    cleaned_plate = plate.strip().upper().replace(" ", "").replace("-", "").replace(".", "")
+    session = get_session()
+    try:
+        # 1. Exact match check on precomputed trajectories
         trajs = session.query(Trajectory)\
                        .filter(Trajectory.plate_text == cleaned_plate)\
                        .order_by(Trajectory.start_time.desc()).all()
 
+        # 2. Case/whitespace insensitive partial match on Trajectory table
         if not trajs:
-            # Attempt on-the-fly reconstruction from plate_events
-            events_count = session.query(PlateEvent)\
-                                  .filter(PlateEvent.plate_text == cleaned_plate).count()
-            if events_count > 0:
+            trajs = session.query(Trajectory)\
+                           .filter(Trajectory.plate_text.like(f"%{cleaned_plate}%"))\
+                           .order_by(Trajectory.total_cameras.desc()).all()
+
+        # 3. If still not found, check PlateEvent table (exact or partial)
+        if not trajs:
+            event_match = session.query(PlateEvent.plate_text)\
+                                 .filter(PlateEvent.plate_text == cleaned_plate)\
+                                 .first()
+            if not event_match:
+                event_match = session.query(PlateEvent.plate_text)\
+                                     .filter(PlateEvent.plate_text.like(f"%{cleaned_plate}%"))\
+                                     .first()
+
+            if event_match:
+                matched_plate = event_match[0]
                 engine = TrajectoryEngine(session)
-                trajs = engine.build_trajectories_for_plate(cleaned_plate, commit=True)
+                trajs = engine.build_trajectories_for_plate(matched_plate, commit=True)
                 
         if not trajs:
+            # Provide suggestions of existing plates
+            sample_plates = [t.plate_text for t in session.query(Trajectory.plate_text).distinct().limit(5).all()]
             raise HTTPException(
                 status_code=404, 
-                detail=f"No trajectory sightings found for license plate: {cleaned_plate}"
+                detail={
+                    "message": f"No trajectory sightings found for license plate: '{plate}'",
+                    "cleaned_query": cleaned_plate,
+                    "available_suggestions": sample_plates
+                }
             )
 
+        matched_plate = trajs[0].plate_text
         return {
-            "plate_text": cleaned_plate,
+            "plate_text": matched_plate,
             "trajectories_count": len(trajs),
             "trajectories": [t.to_dict() for t in trajs]
         }

@@ -199,13 +199,27 @@ class AlertService:
     def check_blacklist_match(
         self, plate_text: str, camera_id: int = None, camera_name: str = None
     ) -> Optional[dict]:
-        """Check if sighted vehicle is blacklisted and create a CRITICAL alert immediately."""
+        """Check if sighted vehicle is blacklisted and create an alert (throttled to avoid spam)."""
         fv = (
             self.session.query(FlaggedVehicle)
             .filter(FlaggedVehicle.plate_text == plate_text.upper(), FlaggedVehicle.active == True)
             .first()
         )
         if fv:
+            # Throttle: don't create duplicate alerts for the same plate within 10 minutes
+            ten_mins_ago = datetime.datetime.utcnow() - datetime.timedelta(minutes=10)
+            recent_alert = (
+                self.session.query(Alert.id)
+                .filter(
+                    Alert.alert_type == AlertType.FLAGGED_VEHICLE,
+                    Alert.plate_text == plate_text.upper(),
+                    Alert.timestamp >= ten_mins_ago
+                )
+                .first()
+            )
+            if recent_alert:
+                return None
+
             loc = camera_name or (f"Camera #{camera_id}" if camera_id else "Smart City Grid")
             msg = f"🚨 BLACKLISTED VEHICLE DETECTED: {plate_text.upper()} at {loc}! Flag reason: {fv.reason}"
             return self.create_alert(

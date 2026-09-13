@@ -50,12 +50,16 @@ class TrafficVolumeAnalyzer:
 
     def get_hourly_traffic_volume(self):
         """Aggregates traffic volume by hour of day (0-23)."""
-        events = self.session.query(PlateEvent.timestamp).all()
+        h_expr = func.strftime('%H', PlateEvent.timestamp)
+        hourly_data = self.session.query(h_expr, func.count(PlateEvent.id))\
+                                  .group_by(h_expr).all()
         hourly_counts = {h: 0 for h in range(24)}
-        
-        for (ts,) in events:
-            if ts:
-                hourly_counts[ts.hour] += 1
+        for h_str, count in hourly_data:
+            if h_str is not None:
+                try:
+                    hourly_counts[int(h_str)] = count
+                except (ValueError, TypeError):
+                    pass
                 
         return [
             {"hour": f"{h:02d}:00", "count": count}

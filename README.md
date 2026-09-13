@@ -78,22 +78,31 @@ CITYSURV strictly enforces the separation of concerns between visual plate local
 * **Autonomous Real-Time Traffic Streaming:**
   * Continuous background simulation engine generating realistic vehicle sightings along connected city arterial corridors.
   * Instant live WebSocket telemetry pushes to all connected browser clients (`ws://localhost:8000/ws/live`).
-* **Multi-Camera Trajectory Reconstruction:**
-  * Chronologically chains detections of the same license plate into complete routes.
-  * Calculates segment distance (km), transit duration (minutes), and average travel speed (km/h).
-* **Interactive GIS Map Visualization:**
-  * Built with Leaflet.js with custom dark/neon cartography.
-  * Real-time camera checkpoint status (Active, Maintenance, Offline).
-  * Animated route playback with origin, waypoints, and destination pins.
+* **High-Performance Trajectory Tracking Engine:**
+  * Chronologically chains detections of the same license plate into complete multi-hop routes.
+  * Resilient plate normalization (strips dashes, dots, spaces) and partial-match search fallback.
+  * Autocomplete search suggestions (`/api/trajectories/suggest`) for lightning-fast vehicle lookups.
+  * **Distinct Origin & Destination Visuals:** Glowing emerald Origin beacon (`START / ORIGIN 🚩`), ruby Destination beacon (`END / DESTINATION 🏁`), directional chevrons, and camera checkpoint badges.
+  * **Interactive Route Playback:** Animated vehicle driving simulation along reconstructed polyline paths.
+  * **Dynamic Real-Time Route Appending:** Automatically connects newly detected camera sightings to an active vehicle track in real time with camera radar pings.
+* **Smart Alert Management & Throttling:**
+  * Real-time speed anomaly detection (>75 km/h) and flagged/blacklisted vehicle tracking.
+  * **Distraction-Free Silent Mode:** Silenced intrusive audio tones for smooth surveillance operations.
+  * **Frequency Throttling & Session Suppression:** Critical modals throttled to at most once every 15 minutes with permanent session suppression upon dismissal or active tracking.
+  * Backend deduplication preventing alert table flooding.
+* **Ultra-Fast Database Architecture:**
+  * Cached SQLAlchemy global connection pool with SQLite **WAL (Write-Ahead Logging)** mode.
+  * Database-level SQL `GROUP BY` aggregations for heatmaps and traffic volumes delivering sub-25ms response times.
+* **Interactive GIS Map & Traffic Density:**
+  * Built with Leaflet.js with custom dark/neon cartography centered on surveillance corridors.
+  * Live camera radar pulse animations and real-time ANPR stream viewing tab.
+  * Dynamic Traffic Density layer with color-coded congestion bubbles and floating legend.
   * Spatial polygon geofence zones with automated entry/exit breach detection.
 * **Command Center Intelligence Dashboard:**
   * **24-Hour Detection Heatmap:** Matrix plotting hourly traffic density per camera node.
   * **Peak Hour Analysis:** Time-band traffic volume distribution curve.
   * **Origin-Destination (OD) Matrix:** Most frequented travel corridors across the city.
   * **Camera Uptime & Health Matrix:** Detection counts and operational statuses.
-* **Security & Watchlist Alerts:**
-  * Real-time speed anomaly detection (>75 km/h) with alert escalation.
-  * Flagged vehicle watchlist management (stolen, wanted, or suspicious plates).
 * **Data Export:**
   * Export sightings and trajectories to CSV, JSON, or printable executive HTML summary reports.
 
@@ -225,6 +234,7 @@ CITYSURV exposes a comprehensive set of RESTful endpoints:
 ### Vehicle Trajectories
 * `GET /api/trajectories` — List reconstructed vehicle trajectories (paginated).
 * `GET /api/trajectories/plates` — List all unique vehicles available for trajectory tracking.
+* `GET /api/trajectories/suggest?q=...` — Real-time autocomplete suggestions for license plates.
 * `GET /api/trajectories/search?plate=MH12AB9999` — Retrieve complete chronological multi-camera journey for a license plate.
 
 ### Traffic Analytics

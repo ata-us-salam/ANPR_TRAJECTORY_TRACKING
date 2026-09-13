@@ -44,6 +44,8 @@ data/anpr.db
 data/exports/
 *.sqlite3
 *.db
+*.db-shm
+*.db-wal
 
 # Model training outputs and logs
 runs/

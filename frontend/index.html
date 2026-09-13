@@ -30,7 +30,8 @@
     <!-- Center Search & Quick Select -->
     <div class="search-controls">
       <span class="search-icon">🔍</span>
-      <input type="text" id="plate-search-input" placeholder="Track Plate (e.g. OD02AB1234)..." />
+      <input type="text" id="plate-search-input" list="tracked-plates-datalist" placeholder="Track Plate (e.g. OD02AB1234)..." autocomplete="off" />
+      <datalist id="tracked-plates-datalist"></datalist>
       <select id="quick-plate-select" aria-label="Select sample vehicle plate">
         <option value="">Select Tracked Vehicle...</option>
       </select>
@@ -118,6 +119,39 @@
               <span>🧹</span> Clear Trajectory
             </button>
           </div>
+        </div>
+
+        <!-- Trajectory Route Summary Banner Overlay (Shown when route is tracked) -->
+        <div class="trajectory-summary-banner" id="trajectory-summary-banner" style="display:none;">
+          <div class="summary-plate-box">
+            <span class="summary-flag">IND</span>
+            <span class="summary-plate" id="summary-banner-plate">OD02AB1234</span>
+          </div>
+          <div class="summary-stats">
+            <div class="summary-stat-item">
+              <span class="stat-label">ORIGIN</span>
+              <span class="stat-val" id="summary-banner-origin">CAM-001</span>
+            </div>
+            <span class="summary-arrow">➔</span>
+            <div class="summary-stat-item">
+              <span class="stat-label">DESTINATION</span>
+              <span class="stat-val" id="summary-banner-dest">CAM-010</span>
+            </div>
+            <div class="summary-divider"></div>
+            <div class="summary-stat-item">
+              <span class="stat-label">DISTANCE</span>
+              <span class="stat-val highlight" id="summary-banner-dist">16.3 km</span>
+            </div>
+            <div class="summary-stat-item">
+              <span class="stat-label">AVG SPEED</span>
+              <span class="stat-val" id="summary-banner-speed">56.2 km/h</span>
+            </div>
+            <div class="summary-stat-item">
+              <span class="stat-label">CHECKPOINTS</span>
+              <span class="stat-val" id="summary-banner-cams">10 Cams</span>
+            </div>
+          </div>
+          <button class="summary-close-btn" id="summary-banner-close" type="button" title="Clear Trajectory">✕</button>
         </div>
 
         <!-- Floating Bottom Traffic Legend (Toggled with Traffic Flow Layer) -->
@@ -289,7 +323,7 @@
     </section>
 
     <!-- 2. LIVE ANPR OPTICAL & OCR DETECTION PIPELINE VIEW (PHASE 1) -->
-    <section id="live-anpr-view" class="view-container live-anpr-layout" style="display:none; padding:20px; max-width:1440px; margin:0 auto;">
+    <section id="live-anpr-view" class="view-container live-anpr-layout" style="padding:20px; max-width:1440px; margin:0 auto;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; flex-wrap:wrap; gap:12px;">
         <div>
           <h2 style="font-size:1.4rem; font-weight:800; margin:0 0 4px 0; color:#fff; display:flex; align-items:center; gap:8px;">
