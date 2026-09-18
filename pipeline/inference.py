@@ -161,6 +161,13 @@ class SingleImagePipeline:
             print(f"Error: Could not read image at {image_path}")
             return {"detections": [], "annotated_image": None, "results": []}
 
+        # Normalize oversized input images for sub-second CPU inference
+        max_dim = 1280
+        ih, iw = image.shape[:2]
+        if max(ih, iw) > max_dim:
+            scale = max_dim / float(max(ih, iw))
+            image = cv2.resize(image, (int(iw * scale), int(ih * scale)), interpolation=cv2.INTER_AREA)
+
         # 1. Detect Vehicles
         vehicles = self.vehicle_detector.detect(image)
         print(f"Detected {len(vehicles)} vehicle(s).")

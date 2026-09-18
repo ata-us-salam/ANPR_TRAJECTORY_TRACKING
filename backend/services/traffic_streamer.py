@@ -147,14 +147,48 @@ class CityTrafficStreamEngine:
         if not cam_id:
             return
 
+        # Offload synchronous SQLite operations to threadpool so asyncio loop stays 100% responsive
+        try:
+            result = await asyncio.to_thread(
+                self._sync_record_sighting,
+                cam_id,
+                journey.plate,
+                journey.v_type,
+                journey.color,
+                journey.make
+            )
+            if not result:
+                return
+
+            event_dict, alerts_to_broadcast = result
+
+            # Broadcast alerts
+            for alert in alerts_to_broadcast:
+                try:
+                    await ws_manager.broadcast_alert(alert)
+                except Exception:
+                    pass
+
+            # Broadcast sighting
+            if event_dict:
+                try:
+                    await ws_manager.broadcast_event(event_dict)
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"[TrafficStreamer Warning] Error in sighting processing: {e}")
+
+    def _sync_record_sighting(self, cam_id: int, plate: str, v_type: str, color: str, make: str):
+        """Runs synchronously in a separate threadpool worker."""
         session = get_session()
+        alerts_to_broadcast = []
         try:
             cam = session.query(Camera).filter(Camera.id == cam_id).first()
             if not cam or cam.status != "ACTIVE":
-                return
+                return None
 
             min_sp, max_sp = JUNCTION_SPEED_PROFILES.get(cam.id, (35.0, 50.0))
-            type_mod = -3.0 if journey.v_type in ["Truck", "Bus"] else 0.0
+            type_mod = -3.0 if v_type in ["Truck", "Bus"] else 0.0
             speed = max(16.0, random.uniform(min_sp, max_sp) + type_mod)
             conf = round(random.uniform(0.92, 0.99), 3)
             now = datetime.datetime.utcnow()
@@ -169,12 +203,12 @@ class CityTrafficStreamEngine:
 
             event = PlateEvent(
                 camera_id=cam.id,
-                plate_text=journey.plate,
+                plate_text=plate,
                 confidence=conf,
                 timestamp=now,
-                vehicle_type=journey.v_type,
-                vehicle_color=journey.color,
-                make_model=journey.make,
+                vehicle_type=v_type,
+                vehicle_color=color,
+                make_model=make,
                 direction=cam.direction or direction,
                 speed_estimate_kmh=round(speed, 1)
             )
@@ -187,7 +221,7 @@ class CityTrafficStreamEngine:
             # Update trajectory
             try:
                 traj_engine = TrajectoryEngine(session)
-                traj_engine.build_trajectories_for_plate(journey.plate, commit=True)
+                traj_engine.build_trajectories_for_plate(plate, commit=True)
             except Exception:
                 pass
 
@@ -196,42 +230,39 @@ class CityTrafficStreamEngine:
 
             # 1. Blacklist Match Alert
             try:
-                bl_alert = alert_svc.check_blacklist_match(journey.plate, cam.id, cam.name)
+                bl_alert = alert_svc.check_blacklist_match(plate, cam.id, cam.name)
                 if bl_alert:
-                    await ws_manager.broadcast_alert(bl_alert)
+                    alerts_to_broadcast.append(bl_alert)
             except Exception:
                 pass
 
             # 2. Suspicious Speed / Route Anomaly Alert
             try:
-                sp_alert = alert_svc.check_suspicious_route(journey.plate, cam.id, speed)
+                sp_alert = alert_svc.check_suspicious_route(plate, cam.id, speed)
                 if sp_alert:
-                    await ws_manager.broadcast_alert(sp_alert)
+                    alerts_to_broadcast.append(sp_alert)
                 elif speed > 75.0:
                     speed_alerts = alert_svc.check_speed_anomalies()
                     for sa in speed_alerts:
-                        await ws_manager.broadcast_alert(sa)
+                        alerts_to_broadcast.append(sa)
             except Exception:
                 pass
 
             # 3. Check geofences
             try:
                 geo_svc = GeofenceService(session)
-                geo_alerts = geo_svc.check_point_in_geofences(cam.latitude, cam.longitude, journey.plate, cam.id)
+                geo_alerts = geo_svc.check_point_in_geofences(cam.latitude, cam.longitude, plate, cam.id)
                 if geo_alerts:
                     for ga in geo_alerts:
-                        await ws_manager.broadcast_alert(ga)
+                        alerts_to_broadcast.append(ga)
             except Exception:
                 pass
 
-            # Broadcast live sighting over WebSockets to all connected dashboards and maps
-            try:
-                await ws_manager.broadcast_event(event_dict)
-            except Exception:
-                pass
+            return event_dict, alerts_to_broadcast
 
         finally:
             session.close()
+
 
 # Singleton engine instance
 traffic_streamer = CityTrafficStreamEngine(interval_seconds=4.0)

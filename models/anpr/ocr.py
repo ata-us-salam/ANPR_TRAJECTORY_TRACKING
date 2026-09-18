@@ -48,11 +48,12 @@ class OCREngine:
             return "", 0.0
 
     def read_text_easy(self, image: np.ndarray) -> tuple[str, float]:
-        """Reads text using EasyOCR."""
+        """Reads text using EasyOCR safely without multi-worker deadlocks."""
         if not self.easy_reader or image is None or image.size == 0:
             return "", 0.0
         try:
-            result = self.easy_reader.readtext(image)
+            # workers=0 and batch_size=1 prevent PyTorch DataLoader spinlocks on Windows CPU
+            result = self.easy_reader.readtext(image, workers=0, batch_size=1)
             if not result:
                 return "", 0.0
             texts = []
@@ -69,33 +70,33 @@ class OCREngine:
 
     def read_text(self, image: np.ndarray) -> tuple[str, float]:
         """
-        Reads text from an image trying PaddleOCR first, then EasyOCR fallback.
-        Returns a tuple of (detected_text, average_confidence)
+        Reads text from an image. Uses fast high-accuracy PaddleOCR if available.
+        Only falls back to EasyOCR if PaddleOCR is completely absent.
         """
-        # Try PaddleOCR
-        p_text, p_conf = self.read_text_paddle(image)
-        if p_conf >= 0.65 and len(p_text) >= 4:
+        # 1. Prioritize PaddleOCR
+        if self.paddle_ocr is not None:
+            p_text, p_conf = self.read_text_paddle(image)
             return p_text, p_conf
 
-        # Try EasyOCR
-        e_text, e_conf = self.read_text_easy(image)
-        if e_conf > p_conf:
+        # 2. EasyOCR fallback only when PaddleOCR is not installed
+        if self.easy_reader is not None:
+            e_text, e_conf = self.read_text_easy(image)
             return e_text, e_conf
-            
-        return p_text or e_text, max(p_conf, e_conf)
+
+        return "", 0.0
 
     def read_from_variants(self, image_variants: dict) -> tuple[str, float]:
         """
-        Runs OCR on multiple preprocessed variants of the image and returns the best result
-        based on confidence score. Uses early exit if high-confidence detection is reached.
+        Runs OCR on primary preprocessed variants ('enhanced', 'original') and returns the best result.
+        Uses early exit if confident detection is reached to conserve CPU and guarantee sub-second response times.
         """
         best_text = ""
         best_conf = 0.0
         
-        priority_keys = ['enhanced', 'clahe', 'original', 'grayscale', 'thresh']
+        priority_keys = ['enhanced', 'original']
         ordered_variants = [(k, image_variants[k]) for k in priority_keys if k in image_variants]
         if not ordered_variants:
-            ordered_variants = list(image_variants.items())
+            ordered_variants = list(image_variants.items())[:2]
 
         for variant_name, img in ordered_variants:
             text, conf = self.read_text(img)
@@ -103,7 +104,7 @@ class OCREngine:
                 best_conf = conf
                 best_text = text
             # Early exit for efficiency on CPU
-            if best_conf >= 0.80 and len(best_text) >= 7:
+            if best_conf >= 0.60 and len(best_text) >= 4:
                 break
                 
         return best_text, best_conf

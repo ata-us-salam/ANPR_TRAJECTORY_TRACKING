@@ -2,6 +2,7 @@ import os
 import base64
 import tempfile
 import datetime
+import asyncio
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Request, Query
@@ -61,7 +62,7 @@ def _record_sighting_in_db(plate_text: str, confidence: float, vehicle_type: str
 
 
 @router.post("/run-sample")
-def run_sample_inference(
+async def run_sample_inference(
     sample_name: Optional[str] = None,
     filename: Optional[str] = None
 ):
@@ -88,7 +89,7 @@ def run_sample_inference(
         
     try:
         pipeline = get_pipeline()
-        pipeline_output = pipeline.run(img_path)
+        pipeline_output = await asyncio.to_thread(pipeline.run, img_path)
         
         # Handle dict response
         if isinstance(pipeline_output, dict):
@@ -150,7 +151,7 @@ async def upload_image_and_infer(request: Request):
             tmp_path = tmp.name
 
         pipeline = get_pipeline()
-        pipeline_output = pipeline.run(tmp_path)
+        pipeline_output = await asyncio.to_thread(pipeline.run, tmp_path)
 
         if isinstance(pipeline_output, dict):
             detections = pipeline_output.get("results", [])
@@ -187,7 +188,7 @@ async def upload_image_and_infer(request: Request):
 
 
 @router.post("/upload-base64")
-def upload_base64_and_infer(req: Base64ImageRequest):
+async def upload_base64_and_infer(req: Base64ImageRequest):
     """Processes base64 encoded image through the ANPR AI pipeline with strict payload validation."""
     if not req.image_base64:
         raise HTTPException(status_code=400, detail="Empty image payload.")
@@ -220,7 +221,7 @@ def upload_base64_and_infer(req: Base64ImageRequest):
             tmp_path = tmp.name
 
         pipeline = get_pipeline()
-        pipeline_output = pipeline.run(tmp_path)
+        pipeline_output = await asyncio.to_thread(pipeline.run, tmp_path)
 
         if isinstance(pipeline_output, dict):
             detections = pipeline_output.get("results", [])
@@ -257,14 +258,14 @@ def upload_base64_and_infer(req: Base64ImageRequest):
 
 
 @router.post("/run-sample-video")
-def run_sample_video_inference():
+async def run_sample_video_inference():
     """Runs video tracking on the bundled test_video.mp4 sample."""
     sample_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "test_video.mp4"))
     if not os.path.exists(sample_path):
         raise HTTPException(status_code=404, detail="test_video.mp4 not found on disk.")
     try:
         pipeline = get_video_pipeline(target_fps=4)
-        results = pipeline.run(sample_path)
+        results = await asyncio.to_thread(pipeline.run, sample_path)
         
         for item in results:
             if item.get("valid") and item.get("plate_text"):
@@ -319,7 +320,7 @@ async def upload_video_and_infer(request: Request):
         cap.release()
 
         pipeline = get_video_pipeline(target_fps=4)
-        final_plates = pipeline.run(tmp_path)
+        final_plates = await asyncio.to_thread(pipeline.run, tmp_path)
 
         for item in final_plates:
             if item.get("valid") and item.get("plate_text"):
