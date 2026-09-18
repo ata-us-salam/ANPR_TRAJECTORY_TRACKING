@@ -132,7 +132,7 @@ function renderCameraCards(cameras) {
       </div>
 
       <div class="cam-card-actions">
-        <a href="/?cam=${cam.id}" class="cam-btn">
+        <a href="/?tab=live-anpr&cam=${cam.id}" class="cam-btn">
           <span>🎥</span> View Feed
         </a>
         <a href="/map?focus=${cam.id}" class="cam-btn">

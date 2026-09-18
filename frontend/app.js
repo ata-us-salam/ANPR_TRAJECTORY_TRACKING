@@ -20,6 +20,7 @@ let camerasData = [];
 let cameraMarkers = {}; // Map of camId -> L.marker
 let currentTrajectory = null;
 let activeAlertCount = 0;
+let activeCameraId = 1;
 
 // Default city center (Bhubaneswar ANPR Surveillance Network)
 const CITY_CENTER = [20.3000, 85.8271];
@@ -37,6 +38,9 @@ document.addEventListener('DOMContentLoaded', () => {
   loadTrackedPlatesDropdown();
   loadHudSummary();
   loadRecentFeed();
+
+  // Check URL parameters for direct tab navigation (e.g. ?tab=live-anpr&cam=3)
+  handleUrlRouting();
 
   // Real-time Telemetry & Alerts
   initWebSocket();
@@ -231,18 +235,14 @@ function switchCameraFeed(camId) {
   const tabBtn = document.getElementById('tab-live-anpr-btn');
   if (tabBtn) tabBtn.click();
   
-  const select = document.getElementById('cctv-cam-select');
-  if (select) {
-    select.value = String(camId);
-    select.dispatchEvent(new Event('change'));
-  }
+  switchActiveCamera(camId);
 }
 
 function populateCctvCamDropdown() {
   const select = document.getElementById('cctv-cam-select');
   if (!select || camerasData.length === 0) return;
 
-  const currentVal = select.value;
+  const currentVal = String(activeCameraId || select.value || '1');
   select.innerHTML = '';
   camerasData.forEach(cam => {
     const opt = document.createElement('option');
@@ -251,8 +251,29 @@ function populateCctvCamDropdown() {
     select.appendChild(opt);
   });
 
-  if (currentVal && select.querySelector(`option[value="${currentVal}"]`)) {
+  if (select.querySelector(`option[value="${currentVal}"]`)) {
     select.value = currentVal;
+  }
+  updateCctvHud(activeCameraId);
+}
+
+function handleUrlRouting() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const targetTab = urlParams.get('tab');
+  const targetCam = urlParams.get('cam');
+
+  if (targetTab === 'live-anpr' || targetCam) {
+    const liveAnprBtn = document.getElementById('tab-live-anpr-btn');
+    if (liveAnprBtn) {
+      liveAnprBtn.click();
+    }
+    if (targetCam) {
+      const camId = parseInt(targetCam, 10);
+      if (!isNaN(camId)) {
+        activeCameraId = camId;
+        switchActiveCamera(camId);
+      }
+    }
   }
 }
 
@@ -974,6 +995,7 @@ function initTabs() {
 
         if (targetTab === 'live-anpr-view') {
           initLiveCctvPipeline();
+          updateCctvHud(activeCameraId);
           loadLiveAnprTable();
         } else if (targetTab === 'analytics-view') {
           loadAnalyticsView();
@@ -986,10 +1008,9 @@ function initTabs() {
   const camSelect = document.getElementById('cctv-cam-select');
   if (camSelect) {
     camSelect.addEventListener('change', () => {
-      const opt = camSelect.options[camSelect.selectedIndex];
-      const titleElem = document.getElementById('cctv-cam-title');
-      if (titleElem && opt) {
-        titleElem.textContent = opt.text.toUpperCase();
+      const camId = parseInt(camSelect.value, 10);
+      if (!isNaN(camId)) {
+        switchActiveCamera(camId);
       }
     });
   }
@@ -1122,16 +1143,286 @@ async function loadAnalyticsView() {
 /* -------------------------------------------------------------
  * 9. Live CCTV Optical Feed & Bounding Box Canvas (Phase 1)
  * ----------------------------------------------------------- */
+const CAMERA_PROFILES = {
+  1: {
+    id: 1,
+    name: "CAM-001",
+    location: "Rasulgarh Junction",
+    corridor: "NH-16 Confluence / Flyover Chokepoint",
+    direction: "North → South",
+    gps: "20.2917° N, 85.8643° E",
+    lanes: 3,
+    avgSpeed: "21.8 km/h",
+    speedFactor: 1.6,
+    roadColor: "#111827",
+    shoulderColor: "#38bdf8",
+    shoulderType: "guardrail",
+    markingColor: "#f59e0b",
+    ambientTint: "rgba(245, 158, 11, 0.04)",
+    perspective: "overhead",
+    feature: "flyover-shadow",
+    vehicleTypes: ["Truck", "Car", "Auto-Rickshaw", "Car", "Truck", "Motorcycle"]
+  },
+  2: {
+    id: 2,
+    name: "CAM-002",
+    location: "Vani Vihar Square",
+    corridor: "Utkal University Gateway",
+    direction: "East → West",
+    gps: "20.3018° N, 85.8491° E",
+    lanes: 3,
+    avgSpeed: "37.3 km/h",
+    speedFactor: 3.2,
+    roadColor: "#162032",
+    shoulderColor: "#22c55e",
+    shoulderType: "green-verge",
+    markingColor: "#ffffff",
+    ambientTint: "rgba(56, 189, 248, 0.05)",
+    perspective: "angled-right",
+    feature: "double-yellow-center",
+    vehicleTypes: ["Car", "Motorcycle", "Car", "Bus", "SUV", "Auto-Rickshaw"]
+  },
+  3: {
+    id: 3,
+    name: "CAM-003",
+    location: "Acharya Vihar",
+    corridor: "Science Park Arterial Link",
+    direction: "North → South",
+    gps: "20.2982° N, 85.8362° E",
+    lanes: 3,
+    avgSpeed: "43.6 km/h",
+    speedFactor: 3.9,
+    roadColor: "#141e2e",
+    shoulderColor: "#eab308",
+    shoulderType: "curb-striped",
+    markingColor: "#ffffff",
+    ambientTint: "rgba(255, 255, 255, 0.03)",
+    perspective: "straight",
+    feature: "center-median-island",
+    vehicleTypes: ["Car", "SUV", "Motorcycle", "Car", "SUV"]
+  },
+  4: {
+    id: 4,
+    name: "CAM-004",
+    location: "Jaydev Vihar",
+    corridor: "Commercial Hub Crossroads",
+    direction: "East → West",
+    gps: "20.3015° N, 85.8239° E",
+    lanes: 3,
+    avgSpeed: "26.2 km/h",
+    speedFactor: 2.1,
+    roadColor: "#1a2336",
+    shoulderColor: "#ef4444",
+    shoulderType: "caution-hazard",
+    markingColor: "#f59e0b",
+    ambientTint: "rgba(239, 68, 68, 0.04)",
+    perspective: "angled-left",
+    feature: "intersection-box",
+    vehicleTypes: ["Auto-Rickshaw", "Car", "Bus", "Motorcycle", "Truck", "Auto-Rickshaw"]
+  },
+  5: {
+    id: 5,
+    name: "CAM-005",
+    location: "Khandagiri Square",
+    corridor: "National Express Bypass",
+    direction: "South → West",
+    gps: "20.2586° N, 85.7865° E",
+    lanes: 4,
+    avgSpeed: "63.4 km/h",
+    speedFactor: 5.6,
+    roadColor: "#0f172a",
+    shoulderColor: "#94a3b8",
+    shoulderType: "guardrail",
+    markingColor: "#38bdf8",
+    ambientTint: "rgba(59, 130, 246, 0.06)",
+    perspective: "wide-highway",
+    feature: "overhead-gantry",
+    vehicleTypes: ["Truck", "Car", "SUV", "Truck", "Car", "SUV"]
+  },
+  6: {
+    id: 6,
+    name: "CAM-006",
+    location: "Master Canteen Square",
+    corridor: "Central Railway Station Downtown Loop",
+    direction: "Central Loop",
+    gps: "20.2676° N, 85.8427° E",
+    lanes: 3,
+    avgSpeed: "31.0 km/h",
+    speedFactor: 2.6,
+    roadColor: "#1f1b2b",
+    shoulderColor: "#b45309",
+    shoulderType: "brick-sidewalk",
+    markingColor: "#ffffff",
+    ambientTint: "rgba(251, 146, 60, 0.07)",
+    perspective: "roundabout-curve",
+    feature: "zebra-crossing",
+    vehicleTypes: ["Auto-Rickshaw", "Car", "Motorcycle", "Auto-Rickshaw", "Car", "Motorcycle"]
+  },
+  7: {
+    id: 7,
+    name: "CAM-007",
+    location: "Kalpana Square",
+    corridor: "Old Town Heritage Artery",
+    direction: "South → North",
+    gps: "20.2562° N, 85.8441° E",
+    lanes: 2,
+    avgSpeed: "47.1 km/h",
+    speedFactor: 4.1,
+    roadColor: "#1e1b22",
+    shoulderColor: "#a8a29e",
+    shoulderType: "curb-striped",
+    markingColor: "#facc15",
+    ambientTint: "rgba(245, 158, 11, 0.05)",
+    perspective: "straight-2lane",
+    feature: "heritage-streetlamps",
+    vehicleTypes: ["Motorcycle", "Car", "Auto-Rickshaw", "Car", "Motorcycle"]
+  },
+  8: {
+    id: 8,
+    name: "CAM-008",
+    location: "Chandrasekharpur",
+    corridor: "Dual Carriageway Boulevard",
+    direction: "South → North",
+    gps: "20.3248° N, 85.8172° E",
+    lanes: 4,
+    avgSpeed: "52.8 km/h",
+    speedFactor: 4.7,
+    roadColor: "#101a2c",
+    shoulderColor: "#10b981",
+    shoulderType: "green-verge",
+    markingColor: "#ffffff",
+    ambientTint: "rgba(6, 182, 212, 0.05)",
+    perspective: "dual-carriageway",
+    feature: "center-median-island",
+    vehicleTypes: ["SUV", "Car", "Motorcycle", "Car", "SUV", "Auto-Rickshaw"]
+  },
+  9: {
+    id: 9,
+    name: "CAM-009",
+    location: "Patia Square",
+    corridor: "Tech Spine Corridor",
+    direction: "South → North",
+    gps: "20.3547° N, 85.8178° E",
+    lanes: 3,
+    avgSpeed: "42.1 km/h",
+    speedFactor: 3.7,
+    roadColor: "#121d30",
+    shoulderColor: "#06b6d4",
+    shoulderType: "tech-neon-curb",
+    markingColor: "#22d3ee",
+    ambientTint: "rgba(14, 165, 233, 0.06)",
+    perspective: "straight",
+    feature: "overhead-gantry",
+    vehicleTypes: ["Car", "SUV", "Motorcycle", "Car", "SUV"]
+  },
+  10: {
+    id: 10,
+    name: "CAM-010",
+    location: "KIIT Square",
+    corridor: "University Campus Crossing",
+    direction: "West → East",
+    gps: "20.3562° N, 85.8190° E",
+    lanes: 3,
+    avgSpeed: "35.0 km/h",
+    speedFactor: 2.9,
+    roadColor: "#172033",
+    shoulderColor: "#38bdf8",
+    shoulderType: "curb-striped",
+    markingColor: "#ffffff",
+    ambientTint: "rgba(241, 245, 249, 0.06)",
+    perspective: "angled-right",
+    feature: "zebra-crossing",
+    vehicleTypes: ["Motorcycle", "Car", "Auto-Rickshaw", "Motorcycle", "Car", "Auto-Rickshaw"]
+  },
+  11: {
+    id: 11,
+    name: "CAM-011",
+    location: "Infocity Junction",
+    corridor: "Silicon IT Expressway",
+    direction: "North → West",
+    gps: "20.3585° N, 85.8115° E",
+    lanes: 4,
+    avgSpeed: "67.4 km/h",
+    speedFactor: 6.2,
+    roadColor: "#091024",
+    shoulderColor: "#38bdf8",
+    shoulderType: "guardrail",
+    markingColor: "#60a5fa",
+    ambientTint: "rgba(56, 189, 248, 0.08)",
+    perspective: "wide-highway",
+    feature: "overhead-gantry",
+    vehicleTypes: ["SUV", "Car", "Truck", "SUV", "Car", "Truck"]
+  },
+  12: {
+    id: 12,
+    name: "CAM-012",
+    location: "Baramunda Bus Stand",
+    corridor: "Interstate Transit Terminal Gateway",
+    direction: "West → North",
+    gps: "20.2798° N, 85.7925° E",
+    lanes: 3,
+    avgSpeed: "33.2 km/h",
+    speedFactor: 2.8,
+    roadColor: "#181d26",
+    shoulderColor: "#eab308",
+    shoulderType: "curb-striped",
+    markingColor: "#facc15",
+    ambientTint: "rgba(234, 179, 8, 0.05)",
+    perspective: "bus-terminal-bay",
+    feature: "dedicated-bus-bay",
+    vehicleTypes: ["Bus", "Auto-Rickshaw", "Bus", "Car", "Auto-Rickshaw", "Car"]
+  },
+  13: {
+    id: 13,
+    name: "CAM-013",
+    location: "Cuttack-Puri Road (Ravi Talkies)",
+    corridor: "Heritage Commercial Road",
+    direction: "South → East",
+    gps: "20.2505° N, 85.8475° E",
+    lanes: 2,
+    avgSpeed: "24.5 km/h",
+    speedFactor: 2.1,
+    roadColor: "#1d1916",
+    shoulderColor: "#f97316",
+    shoulderType: "caution-hazard",
+    markingColor: "#fb923c",
+    ambientTint: "rgba(249, 115, 22, 0.07)",
+    perspective: "straight-2lane",
+    feature: "maintenance-hazard-stripes",
+    vehicleTypes: ["Auto-Rickshaw", "Motorcycle", "Car", "Auto-Rickshaw", "Motorcycle"]
+  }
+};
+
+const ODISHA_PLATES_POOL = [
+  'OD02AB1234', 'OD33H5678', 'OD05K9912', 'OD07BB9001', 'OD14TK2200',
+  'OD02PX7788', 'OD02TR1011', 'OD05MC3311', 'OD10ZZ4040', 'OD14HT9911',
+  'OD02CV4455', 'OD05BK8800', 'OD02AZ4421', 'OD33M8823', 'OD02BW9090'
+];
+
+const VEHICLE_BODY_COLORS = [
+  '#f8fafc', '#0f172a', '#94a3b8', '#dc2626', '#1e40af', '#059669', '#d97706', '#475569'
+];
+
 let cctvCanvas = null;
 let cctvCtx = null;
 let cctvAnimationActive = false;
-let currentDetections = [];
 let laneOffset = 0;
+let simulatedVehicles = [];
+let camSwitchTransition = {
+  active: false,
+  startTime: 0,
+  duration: 340,
+  toCamId: 1
+};
 
 function initLiveCctvPipeline() {
   cctvCanvas = document.getElementById('live-cctv-canvas');
   if (!cctvCanvas) return;
   cctvCtx = cctvCanvas.getContext('2d');
+
+  if (simulatedVehicles.length === 0) {
+    initSimulatedVehiclesForCamera(activeCameraId);
+  }
 
   if (!cctvAnimationActive) {
     cctvAnimationActive = true;
@@ -1139,53 +1430,555 @@ function initLiveCctvPipeline() {
   }
 }
 
+function switchActiveCamera(camId) {
+  const targetId = parseInt(camId, 10) || 1;
+  activeCameraId = targetId;
+
+  // Sync dropdown if needed
+  const select = document.getElementById('cctv-cam-select');
+  if (select && select.value !== String(targetId)) {
+    select.value = String(targetId);
+  }
+
+  // Trigger smooth CCTV switcher glitch transition
+  camSwitchTransition.active = true;
+  camSwitchTransition.startTime = Date.now();
+  camSwitchTransition.toCamId = targetId;
+
+  // Re-seed simulated traffic for the new camera's characteristics
+  initSimulatedVehiclesForCamera(targetId);
+
+  // Update HUD text elements
+  updateCctvHud(targetId);
+}
+
+function updateCctvHud(camId) {
+  const profile = CAMERA_PROFILES[camId] || CAMERA_PROFILES[1];
+  
+  const titleElem = document.getElementById('cctv-cam-title');
+  if (titleElem) {
+    titleElem.textContent = `${profile.name} // ${profile.location.toUpperCase()}`;
+  }
+
+  const metaElem = document.getElementById('cctv-cam-meta');
+  if (metaElem) {
+    metaElem.textContent = `DIR: ${profile.direction.toUpperCase()} • GPS: ${profile.gps}`;
+  }
+
+  const corridorElem = document.getElementById('cctv-cam-corridor');
+  if (corridorElem) {
+    corridorElem.textContent = `ZONE: ${profile.corridor.toUpperCase()} • FLOW: ${profile.avgSpeed}`;
+  }
+}
+
+function initSimulatedVehiclesForCamera(camId) {
+  const profile = CAMERA_PROFILES[camId] || CAMERA_PROFILES[1];
+  const lanes = profile.lanes || 3;
+  simulatedVehicles = [];
+
+  // Generate 3 staggered vehicles on screen
+  const initialProgress = [0.18, 0.52, 0.86];
+  initialProgress.forEach((p, idx) => {
+    const lane = idx % lanes;
+    const vType = profile.vehicleTypes[idx % profile.vehicleTypes.length] || 'Car';
+    const isCommercial = vType === 'Auto-Rickshaw' || vType === 'Truck' || vType === 'Bus';
+    const plate = ODISHA_PLATES_POOL[(camId * 3 + idx) % ODISHA_PLATES_POOL.length];
+    const color = isCommercial && vType === 'Auto-Rickshaw' 
+      ? '#15803d' 
+      : VEHICLE_BODY_COLORS[(camId + idx * 2) % VEHICLE_BODY_COLORS.length];
+
+    simulatedVehicles.push({
+      progress: p,
+      lane: lane,
+      type: vType,
+      color: color,
+      plateText: plate,
+      speed: Math.round(parseFloat(profile.avgSpeed) + (Math.random() * 8 - 4)),
+      confidence: 0.94 + Math.random() * 0.05,
+      isCommercial: isCommercial
+    });
+  });
+}
+
 function renderCctvFrame() {
   if (!cctvCanvas || !cctvCtx) return;
   const ctx = cctvCtx;
   const w = cctvCanvas.width;
   const h = cctvCanvas.height;
+  const profile = CAMERA_PROFILES[activeCameraId] || CAMERA_PROFILES[1];
 
-  // 1. Asphalt Road Background
-  ctx.fillStyle = '#0f172a';
+  // 1. Scene Background (Dark Surveillance Field)
+  ctx.fillStyle = '#020617';
   ctx.fillRect(0, 0, w, h);
 
-  // Road Perspective Surface
-  ctx.fillStyle = '#1e293b';
+  // Horizon & Perspective Boundaries
+  const topY = h * 0.14;
+  const botY = h * 1.0;
+  let topL, topR, botL, botR;
+
+  if (profile.perspective === 'wide-highway') {
+    topL = w * 0.18; topR = w * 0.82;
+    botL = w * 0.02; botR = w * 0.98;
+  } else if (profile.perspective === 'straight-2lane') {
+    topL = w * 0.32; topR = w * 0.68;
+    botL = w * 0.12; botR = w * 0.88;
+  } else if (profile.perspective === 'angled-right') {
+    topL = w * 0.28; topR = w * 0.78;
+    botL = w * 0.08; botR = w * 0.98;
+  } else if (profile.perspective === 'angled-left') {
+    topL = w * 0.22; topR = w * 0.72;
+    botL = w * 0.02; botR = w * 0.92;
+  } else if (profile.perspective === 'roundabout-curve') {
+    topL = w * 0.26; topR = w * 0.76;
+    botL = w * 0.04; botR = w * 0.96;
+  } else {
+    topL = w * 0.25; topR = w * 0.75;
+    botL = w * 0.05; botR = w * 0.95;
+  }
+
+  // 2. Road Surface Polygon
+  ctx.fillStyle = profile.roadColor || '#111827';
   ctx.beginPath();
-  ctx.moveTo(w * 0.25, 0);
-  ctx.lineTo(w * 0.75, 0);
-  ctx.lineTo(w * 0.95, h);
-  ctx.lineTo(w * 0.05, h);
+  ctx.moveTo(topL, topY);
+  ctx.lineTo(topR, topY);
+  ctx.lineTo(botR, botY);
+  ctx.lineTo(botL, botY);
   ctx.closePath();
   ctx.fill();
 
-  // Road Shoulders
-  ctx.strokeStyle = '#3b82f6';
-  ctx.lineWidth = 2;
-  ctx.stroke();
+  // 3. Road Shoulders / Curbs / Barriers
+  if (profile.shoulderType === 'guardrail') {
+    // Left Barrier
+    ctx.strokeStyle = profile.shoulderColor || '#94a3b8';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(topL, topY);
+    ctx.lineTo(botL, botY);
+    ctx.stroke();
+    // Right Barrier
+    ctx.beginPath();
+    ctx.moveTo(topR, topY);
+    ctx.lineTo(botR, botY);
+    ctx.stroke();
+  } else if (profile.shoulderType === 'green-verge') {
+    // Left Green Verge
+    ctx.fillStyle = '#14532d';
+    ctx.beginPath();
+    ctx.moveTo(0, topY);
+    ctx.lineTo(topL, topY);
+    ctx.lineTo(botL, botY);
+    ctx.lineTo(0, botY);
+    ctx.closePath();
+    ctx.fill();
+    // Right Green Verge
+    ctx.beginPath();
+    ctx.moveTo(topR, topY);
+    ctx.lineTo(w, topY);
+    ctx.lineTo(w, botY);
+    ctx.lineTo(botR, botY);
+    ctx.closePath();
+    ctx.fill();
+    // Edge curb line
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(topL, topY); ctx.lineTo(botL, botY);
+    ctx.moveTo(topR, topY); ctx.lineTo(botR, botY);
+    ctx.stroke();
+  } else if (profile.shoulderType === 'brick-sidewalk') {
+    // Red-brick sidewalk
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(0, topY, topL, botY - topY);
+    ctx.fillRect(topR, topY, w - topR, botY - topY);
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(topL, topY); ctx.lineTo(botL, botY);
+    ctx.moveTo(topR, topY); ctx.lineTo(botR, botY);
+    ctx.stroke();
+  } else if (profile.shoulderType === 'caution-hazard') {
+    // Diagonal hazard stripes along shoulders
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 5;
+    ctx.setLineDash([12, 12]);
+    ctx.beginPath();
+    ctx.moveTo(topL, topY); ctx.lineTo(botL, botY);
+    ctx.moveTo(topR, topY); ctx.lineTo(botR, botY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else {
+    // Standard striped curb
+    ctx.strokeStyle = profile.shoulderColor || '#eab308';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(topL, topY); ctx.lineTo(botL, botY);
+    ctx.moveTo(topR, topY); ctx.lineTo(botR, botY);
+    ctx.stroke();
+  }
 
-  // Lane Dividers (animated motion)
-  laneOffset = (laneOffset + 3.5) % 40;
-  ctx.strokeStyle = '#f59e0b';
-  ctx.lineWidth = 3;
-  ctx.setLineDash([20, 20]);
+  // 4. Distinct Location Road Features
+  if (profile.feature === 'zebra-crossing') {
+    // Bold white pedestrian crosswalk zebra bars across road
+    const zebraY = h * 0.72;
+    const zebraH = 26;
+    const pZ = (zebraY - topY) / (botY - topY);
+    const zL = topL + (botL - topL) * pZ;
+    const zR = topR + (botR - topR) * pZ;
+    const barCount = 10;
+    const step = (zR - zL) / barCount;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    for (let i = 0; i < barCount; i += 2) {
+      ctx.fillRect(zL + i * step, zebraY, step * 0.9, zebraH);
+    }
+  } else if (profile.feature === 'center-median-island') {
+    // Raised green divider strip down the center
+    const medTopW = 12;
+    const medBotW = 28;
+    const medCenterX_top = (topL + topR) / 2;
+    const medCenterX_bot = (botL + botR) / 2;
+    ctx.fillStyle = '#166534';
+    ctx.beginPath();
+    ctx.moveTo(medCenterX_top - medTopW / 2, topY);
+    ctx.lineTo(medCenterX_top + medTopW / 2, topY);
+    ctx.lineTo(medCenterX_bot + medBotW / 2, botY);
+    ctx.lineTo(medCenterX_bot - medBotW / 2, botY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#e2e8f0';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  } else if (profile.feature === 'dedicated-bus-bay') {
+    // Yellow hatched Bus transit lane marking on Lane 0
+    const p0 = 0.5;
+    const l0 = topL + (botL - topL) * p0;
+    const r0 = l0 + ((topR + (botR - topR) * p0) - l0) / profile.lanes;
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([10, 10]);
+    ctx.beginPath();
+    ctx.moveTo(topL + (topR - topL) / profile.lanes, topY);
+    ctx.lineTo(botL + (botR - botL) / profile.lanes, botY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // Text on road surface
+    ctx.save();
+    ctx.fillStyle = '#eab308';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText('BUS TRANSIT ONLY', botL + 15, botY - 20);
+    ctx.restore();
+  } else if (profile.feature === 'double-yellow-center') {
+    // Double solid yellow center divider
+    const cTop = (topL + topR) / 2;
+    const cBot = (botL + botR) / 2;
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cTop - 3, topY); ctx.lineTo(cBot - 4, botY);
+    ctx.moveTo(cTop + 3, topY); ctx.lineTo(cBot + 4, botY);
+    ctx.stroke();
+  }
+
+  // 5. Animated Lane Dividers
+  laneOffset = (laneOffset + profile.speedFactor) % 40;
+  ctx.strokeStyle = profile.markingColor || '#ffffff';
+  ctx.lineWidth = 2.5;
+  ctx.setLineDash([18, 22]);
   ctx.lineDashOffset = -laneOffset;
 
-  // Center Dash
-  ctx.beginPath();
-  ctx.moveTo(w * 0.5, 0);
-  ctx.lineTo(w * 0.5, h);
-  ctx.stroke();
-
-  // Quarter Dashes
-  ctx.setLineDash([15, 25]);
-  ctx.beginPath();
-  ctx.moveTo(w * 0.38, 0);
-  ctx.lineTo(w * 0.28, h);
-  ctx.moveTo(w * 0.62, 0);
-  ctx.lineTo(w * 0.72, h);
-  ctx.stroke();
+  const lanes = profile.lanes || 3;
+  for (let l = 1; l < lanes; l++) {
+    // Skip if median island occupies center
+    if (profile.feature === 'center-median-island' && l === Math.floor(lanes / 2)) continue;
+    const frac = l / lanes;
+    const x1 = topL + (topR - topL) * frac;
+    const x2 = botL + (botR - botL) * frac;
+    ctx.beginPath();
+    ctx.moveTo(x1, topY);
+    ctx.lineTo(x2, botY);
+    ctx.stroke();
+  }
   ctx.setLineDash([]);
+
+  // 6. Overhead Surveillance Gantry Bar (if present)
+  if (profile.feature === 'overhead-gantry') {
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.fillRect(0, 0, w, 12);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(0, 0, w, 12);
+    // Camera Optical Pods with Green LEDs
+    for (let g = 0; g < lanes; g++) {
+      const gx = w * 0.28 + g * (w * 0.55 / (lanes - 1 || 1));
+      ctx.fillStyle = '#334155';
+      ctx.fillRect(gx - 8, 12, 16, 10);
+      ctx.fillStyle = '#10b981';
+      ctx.beginPath();
+      ctx.arc(gx, 17, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // 7. Continuous Realistic Traffic Vehicles & Optical Tracking
+  simulatedVehicles.forEach(v => {
+    // Advance vehicle position based on camera flow speed
+    v.progress += profile.speedFactor * 0.0035;
+
+    // Recycle vehicle when it exits bottom of frame
+    if (v.progress > 1.12) {
+      v.progress = -0.15 - Math.random() * 0.25;
+      v.lane = Math.floor(Math.random() * lanes);
+      v.type = profile.vehicleTypes[Math.floor(Math.random() * profile.vehicleTypes.length)] || 'Car';
+      v.isCommercial = v.type === 'Auto-Rickshaw' || v.type === 'Truck' || v.type === 'Bus';
+      v.color = v.isCommercial && v.type === 'Auto-Rickshaw' 
+        ? '#15803d' 
+        : VEHICLE_BODY_COLORS[Math.floor(Math.random() * VEHICLE_BODY_COLORS.length)];
+      v.plateText = ODISHA_PLATES_POOL[Math.floor(Math.random() * ODISHA_PLATES_POOL.length)];
+      v.speed = Math.round(parseFloat(profile.avgSpeed) + (Math.random() * 8 - 4));
+      v.confidence = 0.93 + Math.random() * 0.06;
+    }
+
+    // Only render if within vertical visible range
+    if (v.progress < 0.05 || v.progress > 1.1) return;
+
+    const p = v.progress;
+    const currY = topY + (botY - topY) * p;
+    const roadLeftAtP = topL + (botL - topL) * p;
+    const roadRightAtP = topR + (botR - topR) * p;
+    const laneW = (roadRightAtP - roadLeftAtP) / lanes;
+    const laneCenterX = roadLeftAtP + laneW * (v.lane + 0.5);
+
+    const scale = 0.4 + p * 0.75;
+    let boxW, boxH;
+
+    if (v.type === 'Auto-Rickshaw') {
+      boxW = 85 * scale; boxH = 70 * scale;
+    } else if (v.type === 'Motorcycle') {
+      boxW = 45 * scale; boxH = 60 * scale;
+    } else if (v.type === 'Truck') {
+      boxW = 150 * scale; boxH = 120 * scale;
+    } else if (v.type === 'Bus') {
+      boxW = 155 * scale; boxH = 125 * scale;
+    } else if (v.type === 'SUV') {
+      boxW = 125 * scale; boxH = 90 * scale;
+    } else {
+      boxW = 110 * scale; boxH = 80 * scale; // Car
+    }
+
+    const boxX = laneCenterX - boxW / 2;
+    const boxY = currY - boxH / 2;
+
+    // Vehicle Shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.beginPath();
+    ctx.ellipse(laneCenterX, currY + boxH * 0.42, boxW * 0.46, boxH * 0.16, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Render Vehicle Geometry
+    if (v.type === 'Auto-Rickshaw') {
+      // Indian Auto-Rickshaw (Yellow curved canopy roof, green body)
+      ctx.fillStyle = '#15803d'; // Green lower body
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(boxX + 6 * scale, boxY + 16 * scale, boxW - 12 * scale, boxH - 24 * scale, 8 * scale);
+      else ctx.rect(boxX + 6 * scale, boxY + 16 * scale, boxW - 12 * scale, boxH - 24 * scale);
+      ctx.fill();
+
+      // Yellow Canopy Roof
+      ctx.fillStyle = '#eab308';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(boxX + 4 * scale, boxY + 4 * scale, boxW - 8 * scale, boxH * 0.45, 10 * scale);
+      else ctx.rect(boxX + 4 * scale, boxY + 4 * scale, boxW - 8 * scale, boxH * 0.45);
+      ctx.fill();
+
+      // Rear window & passenger space
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(boxX + 16 * scale, boxY + boxH * 0.35, boxW - 32 * scale, 12 * scale);
+
+      // Tail lights
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(boxX + 10 * scale, boxY + boxH - 12 * scale, 8 * scale, 5 * scale);
+      ctx.fillRect(boxX + boxW - 18 * scale, boxY + boxH - 12 * scale, 8 * scale, 5 * scale);
+
+    } else if (v.type === 'Truck') {
+      // Multi-axle commercial transport truck
+      ctx.fillStyle = v.color || '#334155';
+      ctx.fillRect(boxX + 6 * scale, boxY + 14 * scale, boxW - 12 * scale, boxH - 24 * scale);
+      // Container ribs
+      ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+      ctx.lineWidth = 1.5;
+      for (let i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(boxX + 6 * scale + (boxW - 12 * scale) * (i / 4), boxY + 14 * scale);
+        ctx.lineTo(boxX + 6 * scale + (boxW - 12 * scale) * (i / 4), boxY + boxH - 10 * scale);
+        ctx.stroke();
+      }
+      // Mudflaps & Dual Red Taillights
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(boxX + 4 * scale, boxY + boxH - 8 * scale, 22 * scale, 6 * scale);
+      ctx.fillRect(boxX + boxW - 26 * scale, boxY + boxH - 8 * scale, 22 * scale, 6 * scale);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(boxX + 8 * scale, boxY + boxH - 14 * scale, 12 * scale, 5 * scale);
+      ctx.fillRect(boxX + boxW - 20 * scale, boxY + boxH - 14 * scale, 12 * scale, 5 * scale);
+
+    } else if (v.type === 'Bus') {
+      // Smart City Transit Bus
+      ctx.fillStyle = '#0284c7'; // Transit blue
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(boxX + 4 * scale, boxY + 6 * scale, boxW - 8 * scale, boxH - 14 * scale, 8 * scale);
+      else ctx.rect(boxX + 4 * scale, boxY + 6 * scale, boxW - 8 * scale, boxH - 14 * scale);
+      ctx.fill();
+      // Rear panoramic glass
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(boxX + 14 * scale, boxY + 22 * scale, boxW - 28 * scale, 26 * scale);
+      // Destination Header
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = `bold ${Math.round(8 * scale)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('ODISHA TRANSIT', laneCenterX, boxY + 16 * scale);
+      ctx.textAlign = 'start';
+
+    } else if (v.type === 'Motorcycle') {
+      // Two-wheeler motorcycle with rider
+      // Wheels
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(boxX + 16 * scale, boxY + boxH - 16 * scale, 12 * scale, 14 * scale);
+      // Rider Torso
+      ctx.fillStyle = '#1e3a8a';
+      ctx.beginPath();
+      ctx.ellipse(laneCenterX, boxY + 28 * scale, 12 * scale, 16 * scale, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Rider Helmet
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath();
+      ctx.arc(laneCenterX, boxY + 12 * scale, 9 * scale, 0, Math.PI * 2);
+      ctx.fill();
+      // Taillight
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(laneCenterX - 4 * scale, boxY + boxH - 8 * scale, 8 * scale, 4 * scale);
+
+    } else {
+      // Standard Car or SUV
+      ctx.fillStyle = v.color || '#334155';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(boxX + 8 * scale, boxY + 10 * scale, boxW - 16 * scale, boxH - 18 * scale, 8 * scale);
+      else ctx.rect(boxX + 8 * scale, boxY + 10 * scale, boxW - 16 * scale, boxH - 18 * scale);
+      ctx.fill();
+
+      // Rear Windshield
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(boxX + 18 * scale, boxY + 20 * scale, boxW - 36 * scale, 22 * scale, 4 * scale);
+      else ctx.rect(boxX + 18 * scale, boxY + 20 * scale, boxW - 36 * scale, 22 * scale);
+      ctx.fill();
+
+      // Red Taillights
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(boxX + 10 * scale, boxY + boxH - 14 * scale, 14 * scale, 5 * scale);
+      ctx.fillRect(boxX + boxW - 24 * scale, boxY + boxH - 14 * scale, 14 * scale, 5 * scale);
+    }
+
+    // License Plate (HSRP Indian Format)
+    const plateW = Math.min(80 * scale, boxW * 0.65);
+    const plateH = 20 * scale;
+    const plateX = laneCenterX - plateW / 2;
+    const plateY = boxY + boxH - plateH - 2 * scale;
+
+    // Plate background (Yellow for commercial, White for private)
+    ctx.fillStyle = v.isCommercial ? '#facc15' : '#ffffff';
+    ctx.fillRect(plateX, plateY, plateW, plateH);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(plateX, plateY, plateW, plateH);
+
+    // Blue IND Flag on left
+    const indW = 12 * scale;
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillRect(plateX, plateY, indW, plateH);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${Math.max(5, Math.round(6 * scale))}px sans-serif`;
+    ctx.fillText('IND', plateX + 1.5, plateY + plateH * 0.68);
+
+    // Plate Registration Number
+    ctx.fillStyle = '#000000';
+    ctx.font = `bold ${Math.max(7, Math.round(9.5 * scale))}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText(v.plateText, plateX + indW + (plateW - indW) / 2, plateY + plateH * 0.72);
+    ctx.textAlign = 'start';
+
+    // 8. Optical Detection Locking (When in ANPR Zone: p >= 0.28 && p <= 0.95)
+    if (p >= 0.28 && p <= 0.95) {
+      // YOLO Emerald Green Bounding Box
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+      // Corner Brackets for Computer Vision Tracking Look
+      const cLen = 10 * scale;
+      ctx.lineWidth = 3;
+      // Top-Left
+      ctx.beginPath(); ctx.moveTo(boxX, boxY + cLen); ctx.lineTo(boxX, boxY); ctx.lineTo(boxX + cLen, boxY); ctx.stroke();
+      // Top-Right
+      ctx.beginPath(); ctx.moveTo(boxX + boxW - cLen, boxY); ctx.lineTo(boxX + boxW, boxY); ctx.lineTo(boxX + boxW, boxY + cLen); ctx.stroke();
+      // Bottom-Left
+      ctx.beginPath(); ctx.moveTo(boxX, boxY + boxH - cLen); ctx.lineTo(boxX, boxY + boxH); ctx.lineTo(boxX + cLen, boxY + boxH); ctx.stroke();
+      // Bottom-Right
+      ctx.beginPath(); ctx.moveTo(boxX + boxW - cLen, boxY + boxH); ctx.lineTo(boxX + boxW, boxY + boxH); ctx.lineTo(boxX + boxW, boxY + boxH - cLen); ctx.stroke();
+
+      // YOLO Classification Badge
+      const badgeW = Math.max(110 * scale, 95);
+      const badgeH = 18;
+      ctx.fillStyle = '#10b981';
+      ctx.fillRect(boxX, boxY - badgeH, badgeW, badgeH);
+      ctx.fillStyle = '#020617';
+      ctx.font = 'bold 9.5px sans-serif';
+      ctx.fillText(`${v.type}: ${Math.round(v.confidence * 100)}% • ${v.speed} km/h`, boxX + 4, boxY - 5);
+
+      // License Plate Gold OCR Box
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(plateX - 2, plateY - 2, plateW + 4, plateH + 4);
+    }
+  });
+
+  // 9. Camera Switch Optical Transition FX (Glitch / Signal Lock)
+  if (camSwitchTransition.active) {
+    const elapsed = Date.now() - camSwitchTransition.startTime;
+    const dur = camSwitchTransition.duration;
+    if (elapsed < dur) {
+      const prog = elapsed / dur;
+      // Scanning synchronization bar sweeping down
+      const scanBarY = prog * h;
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+      ctx.fillRect(0, scanBarY - 12, w, 24);
+
+      // Glitch scanline displacement
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+      ctx.fillRect(0, 0, w, h);
+
+      // Camera Switch Centered Notification
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+      ctx.fillRect(w * 0.12, h * 0.40, w * 0.76, 54);
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(w * 0.12, h * 0.40, w * 0.76, 54);
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`⚡ PTZ OPTICAL FEED RE-LOCK: ${profile.name}`, w / 2, h * 0.40 + 22);
+      ctx.fillStyle = '#10b981';
+      ctx.font = '10px monospace';
+      ctx.fillText(`${profile.location.toUpperCase()} // 1080p60 STREAM ACTIVE`, w / 2, h * 0.40 + 40);
+      ctx.textAlign = 'start';
+    } else {
+      camSwitchTransition.active = false;
+    }
+  }
+
+  // 10. Atmospheric Optical Tint & Vignette
+  if (profile.ambientTint) {
+    ctx.fillStyle = profile.ambientTint;
+    ctx.fillRect(0, 0, w, h);
+  }
 
   // Time HUD Overlay Update
   const timeHud = document.getElementById('cctv-time-hud');
@@ -1194,106 +1987,31 @@ function renderCctvFrame() {
     timeHud.textContent = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
   }
 
-  // 2. Render Active Detections & Bounding Boxes
-  const now = Date.now();
-  currentDetections = currentDetections.filter(d => now - d.startTime < 4500);
-
-  // If no recent detection, generate a subtle scanning pulse
-  if (currentDetections.length === 0) {
-    const scanY = (now / 15) % h;
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(w * 0.1, scanY);
-    ctx.lineTo(w * 0.9, scanY);
-    ctx.stroke();
-  }
-
-  currentDetections.forEach(det => {
-    const elapsed = now - det.startTime;
-    const progress = Math.min(elapsed / 4000, 1.0);
-
-    // Vehicle Position animates from top to bottom
-    const startY = h * 0.2;
-    const endY = h * 0.65;
-    const currY = startY + (endY - startY) * progress;
-    const scale = 0.6 + progress * 0.5;
-
-    const boxW = 200 * scale;
-    const boxH = 120 * scale;
-    const boxX = (w - boxW) / 2 + (det.laneOffset || 0);
-
-    // Vehicle Body Representation
-    ctx.fillStyle = det.vehicleColor || '#334155';
-    ctx.beginPath();
-    if (ctx.roundRect) {
-      ctx.roundRect(boxX + 20 * scale, currY + 10 * scale, boxW - 40 * scale, boxH - 20 * scale, 10 * scale);
-    } else {
-      ctx.rect(boxX + 20 * scale, currY + 10 * scale, boxW - 40 * scale, boxH - 20 * scale);
-    }
-    ctx.fill();
-
-    // Windshield
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-    ctx.beginPath();
-    if (ctx.roundRect) {
-      ctx.roundRect(boxX + 35 * scale, currY + 25 * scale, boxW - 70 * scale, 30 * scale, 6 * scale);
-    } else {
-      ctx.rect(boxX + 35 * scale, currY + 25 * scale, boxW - 70 * scale, 30 * scale);
-    }
-    ctx.fill();
-
-    // Vehicle Bounding Box (Vibrant Green)
-    ctx.strokeStyle = '#10b981';
-    ctx.lineWidth = 2.5;
-    ctx.strokeRect(boxX, currY, boxW, boxH);
-
-    // Vehicle Label Tag (Top-Left of Box)
-    ctx.fillStyle = '#10b981';
-    ctx.fillRect(boxX, currY - 20, 140 * scale, 20);
-    ctx.fillStyle = '#0f172a';
-    ctx.font = `bold ${Math.round(11 * scale)}px sans-serif`;
-    ctx.fillText(`${det.vehicleType || 'Car'}: ${(det.confidence || 0.95) * 100}%`, boxX + 6, currY - 5);
-
-    // License Plate Bounding Box (Gold / Amber)
-    const plateW = 90 * scale;
-    const plateH = 24 * scale;
-    const plateX = boxX + (boxW - plateW) / 2;
-    const plateY = currY + boxH - 28 * scale;
-
-    ctx.fillStyle = '#0f172a';
-    ctx.fillRect(plateX, plateY, plateW, plateH);
-    ctx.strokeStyle = '#f59e0b';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(plateX, plateY, plateW, plateH);
-
-    // Plate String OCR Label
-    ctx.fillStyle = '#f59e0b';
-    ctx.font = `bold ${Math.round(11 * scale)}px monospace`;
-    ctx.textAlign = 'center';
-    ctx.fillText(det.plateText, plateX + plateW / 2, plateY + plateH - 6);
-    ctx.textAlign = 'start';
-  });
-
   requestAnimationFrame(renderCctvFrame);
 }
 
 function triggerCctvDetection(eventData) {
-  const det = {
-    startTime: Date.now(),
-    plateText: eventData.plate_text,
-    vehicleType: eventData.vehicle_type || 'Car',
-    confidence: eventData.confidence || 0.95,
-    speed: eventData.speed_estimate_kmh || 55.0,
-    vehicleColor: eventData.vehicle_color === 'Silver' ? '#94a3b8' : 
-                 (eventData.vehicle_color === 'Black' ? '#0f172a' :
-                 (eventData.vehicle_color === 'Red' ? '#dc2626' : 
-                 (eventData.vehicle_color === 'Blue' ? '#2563eb' : '#cbd5e1'))),
-    laneOffset: (Math.random() - 0.5) * 80
+  const vType = eventData.vehicle_type || 'Car';
+  const isCommercial = vType === 'Auto-Rickshaw' || vType === 'Truck' || vType === 'Bus';
+  const profile = CAMERA_PROFILES[activeCameraId] || CAMERA_PROFILES[1];
+
+  // Inject this vehicle directly into the active camera feed in detection zone!
+  const newVehicle = {
+    progress: 0.38,
+    lane: Math.floor(Math.random() * (profile.lanes || 3)),
+    type: vType,
+    color: eventData.vehicle_color === 'Silver' ? '#94a3b8' : 
+           (eventData.vehicle_color === 'Black' ? '#0f172a' :
+           (eventData.vehicle_color === 'Red' ? '#dc2626' : 
+           (eventData.vehicle_color === 'Blue' ? '#1e40af' : '#f8fafc'))),
+    plateText: eventData.plate_text || 'OD02AB1234',
+    speed: Math.round(eventData.speed_estimate_kmh || 45.0),
+    confidence: eventData.confidence || 0.96,
+    isCommercial: isCommercial
   };
 
-  currentDetections.unshift(det);
-  if (currentDetections.length > 3) currentDetections.pop();
+  simulatedVehicles.unshift(newVehicle);
+  if (simulatedVehicles.length > 5) simulatedVehicles.pop();
 
   appendLiveAnprRow(eventData);
 }

@@ -364,10 +364,12 @@
           <!-- Video / Simulation Canvas -->
           <div style="position:relative; width:100%; border-radius:8px; overflow:hidden; border:1px solid rgba(59,130,246,0.3); background:#020617;">
             <canvas id="live-cctv-canvas" width="640" height="380" style="width:100%; height:auto; display:block;"></canvas>
-            <div id="cctv-hud-overlay" style="position:absolute; top:12px; left:12px; pointer-events:none; font-family:monospace; font-size:11px; color:#38bdf8; text-shadow:0 0 4px #000; line-height:1.4;">
-              <div id="cctv-cam-title">CAM-001 // RASULGARH JUNCTION</div>
-              <div id="cctv-time-hud">2026-09-13 12:00:00 UTC</div>
-              <div style="color:#10b981;">AI ENGINE: YOLOv8-N + PADDLEOCR</div>
+            <div id="cctv-hud-overlay" style="position:absolute; top:10px; left:10px; pointer-events:none; font-family:monospace; font-size:11px; color:#38bdf8; text-shadow:0 0 4px #000; line-height:1.45; background:rgba(2,6,23,0.78); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.25); backdrop-filter:blur(4px); box-shadow:0 4px 16px rgba(0,0,0,0.5);">
+              <div id="cctv-cam-title" style="font-weight:800; font-size:12px; color:#38bdf8; letter-spacing:0.5px;">CAM-001 // RASULGARH JUNCTION</div>
+              <div id="cctv-cam-meta" style="color:#94a3b8; font-size:10px;">DIR: NORTH → SOUTH • GPS: 20.2917° N, 85.8643° E</div>
+              <div id="cctv-cam-corridor" style="color:#cbd5e1; font-size:10px;">ZONE: NH-16 CONFLUENCE • FLOW: 21.8 KM/H</div>
+              <div id="cctv-time-hud" style="color:#e2e8f0;">2026-09-18 12:00:00 UTC</div>
+              <div style="color:#10b981; font-weight:700;">AI ENGINE: YOLOv8-N + PADDLEOCR • 1080p HD</div>
             </div>
           </div>
         </div>
