@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:
+  # ── 1. PostgreSQL with PostGIS Spatial Database ──
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: anpr_db
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-anpr_db}
+      POSTGRES_USER: ${POSTGRES_USER:-anpr_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-anpr_secure_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-anpr_user} -d ${POSTGRES_DB:-anpr_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - anpr_network
+
+  # ── 2. FastAPI ANPR & Trajectory Tracking Backend ──
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: anpr_backend
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-anpr_user}:${POSTGRES_PASSWORD:-anpr_secure_pass}@db:5432/${POSTGRES_DB:-anpr_db}
+      DEBUG: "false"
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    volumes:
+      - anpr_exports:/app/data/exports
+      - anpr_uploads:/app/data/uploads
+    networks:
+      - anpr_network
+
+  # ── 3. Nginx Reverse Proxy & Load Balancer ──
+  nginx:
+    image: nginx:alpine
+    container_name: anpr_proxy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - web
+    networks:
+      - anpr_network
+
+volumes:
+  postgres_data:
+    driver: local
+  anpr_exports:
+    driver: local
+  anpr_uploads:
+    driver: local
+
+networks:
+  anpr_network:
+    driver: bridge
