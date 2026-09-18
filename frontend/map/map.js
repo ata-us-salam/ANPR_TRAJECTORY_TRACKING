@@ -19,14 +19,32 @@ let trackedPlates = [];
 const trajectoryColors = ['#00f2fe', '#f59e0b', '#10b981', '#8b5cf6', '#f43f5e', '#38bdf8'];
 
 document.addEventListener('DOMContentLoaded', () => {
-  initAdvMap();
-  loadCameras();
-  loadGeofences();
-  initMapControls();
+  try { initAdvMap(); } catch (e) { console.error('initAdvMap error:', e); }
+  try { loadCameras(); } catch (e) { console.error('loadCameras error:', e); }
+  try { loadGeofences(); } catch (e) { console.error('loadGeofences error:', e); }
+  try { initMapControls(); } catch (e) { console.error('initMapControls error:', e); }
+
+  // Check URL params (?focus=camera_id or ?plate=ABC)
+  const params = new URLSearchParams(window.location.search);
+  const plateParam = params.get('plate');
+  if (plateParam) {
+    setTimeout(() => {
+      addTrackedVehicle(plateParam);
+      const input = document.getElementById('multi-track-input');
+      if (input) input.value = plateParam;
+    }, 800);
+  }
 });
 
 /* ── Map Initialization ── */
 function initAdvMap() {
+  const mapElem = document.getElementById('adv-map');
+  if (!mapElem || typeof L === 'undefined') return;
+
+  if (L.Icon && L.Icon.Default) {
+    L.Icon.Default.imagePath = '/static/leaflet/images/';
+  }
+
   const defaultCenter = [20.3000, 85.8271];
 
   advMap = L.map('adv-map', {
@@ -34,12 +52,21 @@ function initAdvMap() {
     attributionControl: false,
   }).setView(defaultCenter, 13);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  // High-reliability OpenStreetMap tile layer
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    attribution: '© OpenStreetMap'
-  }).addTo(advMap);
+    attribution: '© OpenStreetMap contributors'
+  });
 
-  L.control.zoom({ position: 'bottomright' }).addTo(advMap);
+  osmLayer.addTo(advMap);
+
+  L.control.zoom({ position: 'topleft' }).addTo(advMap);
+
+  // Multi-pass size invalidation to guarantee full tile rasterization on all viewports
+  [50, 150, 300, 600, 1000].forEach(delay => {
+    setTimeout(() => { if (advMap) advMap.invalidateSize(); }, delay);
+  });
+  window.addEventListener('resize', () => { if (advMap) advMap.invalidateSize(); });
 
   cameraLayer = L.layerGroup().addTo(advMap);
   coverageLayer = L.layerGroup();
@@ -51,37 +78,43 @@ function initAdvMap() {
   drawnItems = new L.FeatureGroup();
   advMap.addLayer(drawnItems);
 
-  drawControl = new L.Control.Draw({
-    draw: {
-      polygon: {
-        shapeOptions: { color: '#f43f5e', fillColor: '#f43f5e', fillOpacity: 0.15, weight: 2 },
-        allowIntersection: false,
-      },
-      polyline: false, rectangle: false, circle: false, circlemarker: false, marker: false,
-    },
-    edit: { featureGroup: drawnItems },
-  });
-
-  // Handle polygon creation
-  advMap.on(L.Draw.Event.CREATED, async (e) => {
-    const layer = e.layer;
-    const coords = layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
-    
-    const name = prompt('Enter geofence zone name:', 'Restricted Zone');
-    if (!name) return;
-
+  if (typeof L.Control !== 'undefined' && typeof L.Control.Draw !== 'undefined') {
     try {
-      const res = await fetch('/api/geofences', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, polygon: coords, color: '#f43f5e', zone_type: 'restricted' }),
+      drawControl = new L.Control.Draw({
+        draw: {
+          polygon: {
+            shapeOptions: { color: '#f43f5e', fillColor: '#f43f5e', fillOpacity: 0.15, weight: 2 },
+            allowIntersection: false,
+          },
+          polyline: false, rectangle: false, circle: false, circlemarker: false, marker: false,
+        },
+        edit: { featureGroup: drawnItems },
       });
-      await res.json();
-      loadGeofences();
-    } catch (err) {
-      console.error('Create geofence error:', err);
+
+      const createdEvent = (L.Draw && L.Draw.Event && L.Draw.Event.CREATED) || 'draw:created';
+      advMap.on(createdEvent, async (e) => {
+        const layer = e.layer;
+        const coords = layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+        
+        const name = prompt('Enter geofence zone name:', 'Restricted Zone');
+        if (!name) return;
+
+        try {
+          const res = await fetch('/api/geofences', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, polygon: coords, color: '#f43f5e', zone_type: 'restricted' }),
+          });
+          await res.json();
+          loadGeofences();
+        } catch (err) {
+          console.error('Create geofence error:', err);
+        }
+      });
+    } catch (drawErr) {
+      console.warn('Leaflet draw init skipped:', drawErr);
     }
-  });
+  }
 }
 
 /* ── Load Cameras ── */
@@ -90,9 +123,23 @@ async function loadCameras() {
     const res = await fetch('/api/cameras');
     camerasData = await res.json();
     renderCameraMarkers();
-    if (camerasData.length > 0) {
+    
+    // Check if a specific camera focus was requested via query param
+    const params = new URLSearchParams(window.location.search);
+    const focusCamId = parseInt(params.get('focus'), 10);
+    if (focusCamId) {
+      const targetCam = camerasData.find(c => c.id === focusCamId);
+      if (targetCam && advMap) {
+        advMap.setView([targetCam.latitude, targetCam.longitude], 16);
+        return;
+      }
+    }
+
+    if (camerasData.length > 0 && advMap) {
+      advMap.invalidateSize();
       const bounds = L.latLngBounds(camerasData.map(c => [c.latitude, c.longitude]));
       advMap.fitBounds(bounds, { padding: [50, 50] });
+      setTimeout(() => { if (advMap) advMap.invalidateSize(); }, 150);
     }
   } catch (err) {
     console.error('Load cameras error:', err);

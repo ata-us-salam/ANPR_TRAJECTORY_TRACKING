@@ -53,3 +53,10 @@ runs/
 
 # Raw dataset archives
 dataset/archive*/
+*.cache
+
+# Root temp screenshots & debug scripts
+/*.png
+/dryrun.py
+/inspect_browser.py
+/inspect_dom.py

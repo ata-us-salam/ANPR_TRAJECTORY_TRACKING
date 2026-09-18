@@ -6,6 +6,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
+# Suppress spurious WinError 10054 on Windows ProactorEventLoop when clients disconnect/refresh
+if sys.platform == "win32":
+    from functools import wraps
+    try:
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        def _silence_conn_lost(func):
+            @wraps(func)
+            def wrapper(self, *args, **kwargs):
+                try:
+                    return func(self, *args, **kwargs)
+                except (ConnectionResetError, OSError):
+                    pass
+            return wrapper
+        _ProactorBasePipeTransport._call_connection_lost = _silence_conn_lost(
+            _ProactorBasePipeTransport._call_connection_lost
+        )
+    except Exception:
+        pass
+
 # Ensure root workspace directory is in sys.path
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:

@@ -6,12 +6,12 @@
   <title>City-Wide ANPR Trajectory Tracking & GIS Surveillance</title>
   <meta name="description" content="Intelligent multi-camera ANPR tracking, vehicle trajectory reconstruction, and GIS analytics dashboard.">
   
-  <!-- Leaflet CSS -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <!-- Leaflet CSS (Local) -->
+  <link rel="stylesheet" href="/static/leaflet/leaflet.css?v=3.1">
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=3.1">
 </head>
 <body>
 
@@ -496,7 +496,7 @@
             Click to Browse or Drag & Drop CCTV Video Footage
           </div>
           <div style="color: var(--accent-cyan); font-size: 0.82rem; font-weight:600;">
-            Supports MP4, AVI, WebM (up to 50 MB)
+            Supports MP4, AVI, WebM (up to 200 MB)
           </div>
         </div>
 
@@ -566,9 +566,9 @@
     </div>
   </div>
 
-  <!-- Leaflet JS -->
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <!-- Leaflet JS (Local) -->
+  <script src="/static/leaflet/leaflet.js?v=3.1"></script>
   <!-- Application JS -->
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3.1"></script>
 </body>
 </html>

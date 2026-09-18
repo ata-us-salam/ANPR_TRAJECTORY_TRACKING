@@ -1,5 +1,32 @@
 import re
 
+INDIAN_RTO_STATE_CODES = {
+    "OD": ("Odisha", "Bhubaneswar / Cuttack Region"),
+    "OR": ("Odisha", "Odisha State"),
+    "DL": ("Delhi", "National Capital Territory"),
+    "MH": ("Maharashtra", "Mumbai / Pune Region"),
+    "WB": ("West Bengal", "Kolkata Region"),
+    "KA": ("Karnataka", "Bengaluru Region"),
+    "TN": ("Tamil Nadu", "Chennai Region"),
+    "UP": ("Uttar Pradesh", "Lucknow / NCR Region"),
+    "HR": ("Haryana", "Gurugram / Faridabad Region"),
+    "CH": ("Chandigarh", "Union Territory"),
+    "GJ": ("Gujarat", "Ahmedabad Region"),
+    "TS": ("Telangana", "Hyderabad Region"),
+    "AP": ("Andhra Pradesh", "Amaravati / Visakhapatnam Region"),
+    "KL": ("Kerala", "Thiruvananthapuram / Kochi Region"),
+    "RJ": ("Rajasthan", "Jaipur Region"),
+    "PB": ("Punjab", "Amritsar / Ludhiana Region"),
+    "MP": ("Madhya Pradesh", "Bhopal / Indore Region"),
+    "BR": ("Bihar", "Patna Region"),
+    "JH": ("Jharkhand", "Ranchi Region"),
+    "AS": ("Assam", "Guwahati Region"),
+    "UK": ("Uttarakhand", "Dehradun Region"),
+    "UA": ("Uttarakhand", "Dehradun Region"),
+    "HP": ("Himachal Pradesh", "Shimla Region"),
+    "GA": ("Goa", "Panaji Region")
+}
+
 class PlateValidator:
     def __init__(self):
         # Basic Indian plate pattern: State(2 chars) District(1-2 digits) Optional(1-3 chars) Number(4 digits)
@@ -16,6 +43,34 @@ class PlateValidator:
         """
         plate_text = plate_text.upper().replace(" ", "").replace("-", "")
         return bool(self.pattern.match(plate_text))
+
+    def get_rto_details(self, plate_text: str) -> dict:
+        """
+        Extracts state name, RTO district code, series, and number from an Indian plate.
+        """
+        cleaned = self.clean_text(plate_text)
+        state_code = cleaned[:2] if len(cleaned) >= 2 else ""
+        state_info = INDIAN_RTO_STATE_CODES.get(state_code, ("Indian Union", "Standard Regional Transport"))
+        
+        rto_match = re.match(r"^([A-Z]{2})([0-9]{1,2})([A-Z]{0,3})([0-9]{1,4})$", cleaned)
+        if rto_match:
+            st, dist, series, num = rto_match.groups()
+            return {
+                "state_code": st,
+                "state_name": state_info[0],
+                "rto_jurisdiction": f"RTO {dist} ({state_info[1]})",
+                "series": series,
+                "registration_number": num,
+                "hsrp_standard": True
+            }
+        return {
+            "state_code": state_code,
+            "state_name": state_info[0],
+            "rto_jurisdiction": state_info[1],
+            "series": "",
+            "registration_number": cleaned[4:] if len(cleaned) > 4 else cleaned,
+            "hsrp_standard": False
+        }
 
     def clean_text(self, plate_text: str) -> str:
         """

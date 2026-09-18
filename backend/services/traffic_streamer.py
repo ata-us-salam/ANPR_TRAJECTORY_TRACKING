@@ -16,37 +16,56 @@ from backend.services.websocket_manager import ws_manager
 
 # Bhubaneswar Smart City Corridors across Connected Arterials
 CORRIDOR_CAMERAS = [
-    # Corridor 0: Rasulgarh -> Vani Vihar -> Acharya Vihar -> Jaydev Vihar -> Chandrasekharpur -> Patia -> KIIT -> Infocity
-    [1, 2, 3, 4, 8, 9, 10, 11],
+    # Corridor 0: Rasulgarh -> Vani Vihar -> Acharya Vihar -> Jaydev Vihar
+    [1, 2, 3, 4],
     # Corridor 1: Baramunda -> Jaydev Vihar -> Acharya Vihar -> Vani Vihar -> Rasulgarh
     [12, 4, 3, 2, 1],
     # Corridor 2: Master Canteen -> Kalpana -> Khandagiri -> Baramunda
     [6, 7, 5, 12],
-    # Corridor 3: North Corridor: Chandrasekharpur -> Patia -> KIIT -> Infocity
+    # Corridor 3: Chandrasekharpur -> Patia -> KIIT -> Infocity
     [8, 9, 10, 11],
-    # Corridor 4: South-North Trunk: Khandagiri -> Baramunda -> Jaydev Vihar -> Patia
+    # Corridor 4: Khandagiri -> Baramunda -> Jaydev Vihar -> Patia
     [5, 12, 4, 8, 9, 10],
     # Corridor 5: Reverse Infocity -> Patia -> Jaydev Vihar -> Rasulgarh
-    [11, 10, 9, 8, 4, 3, 1]
+    [11, 10, 9, 8, 4, 3, 1],
+    # Corridor 6: Kalpana -> Master Canteen -> Acharya Vihar -> Jaydev Vihar
+    [7, 6, 3, 4],
+    # Corridor 7: Jaydev Vihar -> Chandrasekharpur -> Patia -> KIIT
+    [4, 8, 9, 10]
 ]
 
-REAL_INDIAN_PLATES = [
-    {"plate": "OD02AB1234", "type": "Car", "color": "Silver", "make": "Sedan", "base_speed": 58.0}, # Blacklisted SIH target!
-    {"plate": "OD05XY9087", "type": "Motorcycle", "color": "Black", "make": "Bike", "base_speed": 52.0},
-    {"plate": "OD02CA9999", "type": "Car", "color": "White", "make": "SUV", "base_speed": 64.0},
-    {"plate": "OD33BT8833", "type": "Bus", "color": "Blue", "make": "City Bus", "base_speed": 42.0},
-    {"plate": "OD14AK7710", "type": "Truck", "color": "Yellow", "make": "Heavy Truck", "base_speed": 38.0},
-    {"plate": "OD02EE8820", "type": "Car", "color": "Red", "make": "Sedan", "base_speed": 88.0}, # Speed anomaly
-    {"plate": "DL01CA9999", "type": "Car", "color": "White", "make": "Sedan", "base_speed": 62.0},
-    {"plate": "MH12AB4325", "type": "Truck", "color": "Dark Gray", "make": "Truck", "base_speed": 44.0},
-    {"plate": "WB12AB1234", "type": "Car", "color": "Silver", "make": "Hatchback", "base_speed": 56.0},
-    {"plate": "KA05MJ4012", "type": "Car", "color": "Black", "make": "SUV", "base_speed": 60.0},
-    {"plate": "HR26DQ5521", "type": "Truck", "color": "Brown", "make": "Truck", "base_speed": 40.0},
-    {"plate": "CH01BL3344", "type": "Car", "color": "White", "make": "Sedan", "base_speed": 92.0}, # Speed anomaly
-    {"plate": "TS09FA8080", "type": "Car", "color": "Blue", "make": "Sedan", "base_speed": 59.0},
-    {"plate": "GJ01ZZ9090", "type": "Car", "color": "White", "make": "Sedan", "base_speed": 65.0},
-    {"plate": "DL3SCK4419", "type": "Motorcycle", "color": "Black", "make": "Bike", "base_speed": 50.0},
+# Dedicated ambient fleet for live simulation to ensure tracked vehicles retain distinct, clean trajectories
+STREAM_COMMUTER_PLATES = [
+    {"plate": "OD02TR1011", "type": "Car", "color": "Silver", "make": "Sedan"},
+    {"plate": "OD02CV4455", "type": "Car", "color": "White", "make": "SUV"},
+    {"plate": "OD33AB8899", "type": "Bus", "color": "Blue", "make": "City Bus"},
+    {"plate": "OD14TK2200", "type": "Truck", "color": "Yellow", "make": "Heavy Truck"},
+    {"plate": "OD05MC3311", "type": "Motorcycle", "color": "Black", "make": "Bike"},
+    {"plate": "OD02PX7788", "type": "Car", "color": "Red", "make": "Sedan"},
+    {"plate": "OD02KL5566", "type": "Car", "color": "Grey", "make": "Sedan"},
+    {"plate": "OD07BB9001", "type": "Car", "color": "White", "make": "Hatchback"},
+    {"plate": "OD10ZZ4040", "type": "Car", "color": "Blue", "make": "Sedan"},
+    {"plate": "OD02MN3131", "type": "Car", "color": "Black", "make": "SUV"},
+    {"plate": "OD33CC1212", "type": "Bus", "color": "Green", "make": "Bus"},
+    {"plate": "OD05BK8800", "type": "Motorcycle", "color": "Red", "make": "Bike"},
+    {"plate": "OD14HT9911", "type": "Truck", "color": "Brown", "make": "Truck"},
 ]
+
+# Camera junction speed profiles for realistic traffic flow
+JUNCTION_SPEED_PROFILES = {
+    1: (18.0, 26.0),  # Rasulgarh: Heavy chokepoint crawl
+    2: (34.0, 43.0),  # Vani Vihar
+    3: (39.0, 48.0),  # Acharya Vihar
+    4: (22.0, 31.0),  # Jaydev Vihar: Heavy congestion
+    5: (58.0, 68.0),  # Khandagiri: Express bypass
+    6: (28.0, 36.0),  # Master Canteen: Downtown core
+    7: (43.0, 52.0),  # Kalpana: Heritage link
+    8: (48.0, 58.0),  # Chandrasekharpur: Boulevard
+    9: (38.0, 46.0),  # Patia Square: Tech corridor
+    10: (32.0, 40.0), # KIIT Square: Campus zone
+    11: (62.0, 72.0), # Infocity: High-speed expressway
+    12: (30.0, 38.0), # Baramunda: Bus terminal
+}
 
 class ActiveVehicleJourney:
     def __init__(self, plate_info: dict, corridor: List[int]):
@@ -54,7 +73,6 @@ class ActiveVehicleJourney:
         self.v_type = plate_info["type"]
         self.color = plate_info.get("color", "White")
         self.make = plate_info.get("make", "Sedan")
-        self.base_speed = plate_info["base_speed"]
         self.corridor = corridor
         self.current_step = 0
         self.completed = False
@@ -78,10 +96,9 @@ class CityTrafficStreamEngine:
         self._seed_active_journeys()
 
     def _seed_active_journeys(self):
-        for plate_info in REAL_INDIAN_PLATES:
+        for plate_info in STREAM_COMMUTER_PLATES[:8]:
             corridor = random.choice(CORRIDOR_CAMERAS)
             journey = ActiveVehicleJourney(plate_info, corridor)
-            # Stagger their initial positions
             journey.current_step = random.randint(0, len(corridor) - 1)
             self._active_journeys.append(journey)
 
@@ -115,12 +132,15 @@ class CityTrafficStreamEngine:
 
     async def generate_single_sighting(self):
         """Picks an active journey, steps it to the next camera, records the event and broadcasts it."""
-        # Clean completed journeys and replenish
+        # Clean completed journeys and replenish with fresh distinct commuters
         self._active_journeys = [j for j in self._active_journeys if not j.completed]
-        if len(self._active_journeys) < 8:
-            plate_info = random.choice(REAL_INDIAN_PLATES)
+        if len(self._active_journeys) < 6:
+            plate_info = random.choice(STREAM_COMMUTER_PLATES)
             corridor = random.choice(CORRIDOR_CAMERAS)
             self._active_journeys.append(ActiveVehicleJourney(plate_info, corridor))
+
+        if not self._active_journeys:
+            return
 
         journey = random.choice(self._active_journeys)
         cam_id = journey.next_camera_id()
@@ -133,7 +153,9 @@ class CityTrafficStreamEngine:
             if not cam or cam.status != "ACTIVE":
                 return
 
-            speed = max(20.0, journey.base_speed + random.uniform(-4.0, 6.0))
+            min_sp, max_sp = JUNCTION_SPEED_PROFILES.get(cam.id, (35.0, 50.0))
+            type_mod = -3.0 if journey.v_type in ["Truck", "Bus"] else 0.0
+            speed = max(16.0, random.uniform(min_sp, max_sp) + type_mod)
             conf = round(random.uniform(0.92, 0.99), 3)
             now = datetime.datetime.utcnow()
 

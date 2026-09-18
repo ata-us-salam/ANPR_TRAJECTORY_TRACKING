@@ -15,16 +15,28 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function initMap() {
+  const mapElem = document.getElementById("vehicle-map");
+  if (!mapElem || typeof L === 'undefined') return;
+
+  if (L.Icon && L.Icon.Default) {
+    L.Icon.Default.imagePath = '/static/leaflet/images/';
+  }
+
   map = L.map("vehicle-map", {
     zoomControl: true,
     attributionControl: false
   }).setView([20.2961, 85.8245], 12);
 
-  // High-contrast dark tile layer for tactical surveillance look
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  // High-reliability OpenStreetMap tiles (darkened with cyber surveillance CSS filter)
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
-    subdomains: "abcd"
+    attribution: "© OpenStreetMap contributors"
   }).addTo(map);
+
+  [80, 250, 600, 1200].forEach(delay => {
+    setTimeout(() => { if (map) map.invalidateSize(); }, delay);
+  });
+  window.addEventListener("resize", () => { if (map) map.invalidateSize(); });
 }
 
 function initListeners() {
@@ -196,8 +208,10 @@ function renderMapRoute(sightings) {
       dashArray: "6, 8"
     }).addTo(map);
     map.fitBounds(routePolyline.getBounds(), { padding: [40, 40] });
+    setTimeout(() => { if (map) map.invalidateSize(); }, 100);
   } else if (latlngs.length === 1) {
     map.setView(latlngs[0], 14);
+    setTimeout(() => { if (map) map.invalidateSize(); }, 100);
   }
 }
 

@@ -1,8 +1,15 @@
 /* Dashboard-specific styles extending the base theme */
 
+html, body {
+  height: auto !important;
+  min-height: 100vh !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
 .dashboard-main {
   flex: 1;
-  overflow-y: auto;
+  overflow-y: visible;
   padding: 24px;
   display: flex;
   flex-direction: column;

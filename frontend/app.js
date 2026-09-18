@@ -50,16 +50,25 @@ document.addEventListener('DOMContentLoaded', () => {
  * 1. Leaflet GIS Map Initialization
  * ----------------------------------------------------------- */
 function initMap() {
+  const mapElem = document.getElementById('map');
+  if (!mapElem || typeof L === 'undefined') return;
+
+  if (L.Icon && L.Icon.Default) {
+    L.Icon.Default.imagePath = '/static/leaflet/images/';
+  }
+
   map = L.map('map', {
     zoomControl: false,
     attributionControl: false
   }).setView(CITY_CENTER, DEFAULT_ZOOM);
 
-  // OpenStreetMap tiles
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  // High-reliability OpenStreetMap tiles (styled with dark surveillance filter in CSS)
+  const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '© OpenStreetMap contributors'
-  }).addTo(map);
+  });
+
+  osmLayer.addTo(map);
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
@@ -67,10 +76,28 @@ function initMap() {
   trajectoryLayerGroup = L.layerGroup().addTo(map);
   trafficInsightsLayerGroup = L.layerGroup().addTo(map);
 
+  // Multi-pass size invalidation to guarantee full tile rasterization on all viewports
+  [80, 250, 600, 1200].forEach(delay => {
+    setTimeout(() => {
+      if (map) {
+        map.invalidateSize();
+        if (camerasData && camerasData.length > 0) {
+          const bounds = L.latLngBounds(camerasData.map(c => [c.latitude, c.longitude]));
+          map.fitBounds(bounds, { padding: [40, 40] });
+        }
+      }
+    }, delay);
+  });
+
+  window.addEventListener('resize', () => {
+    if (map) map.invalidateSize();
+  });
+
   // Recenter map button
   const resetBtn = document.getElementById('reset-map-btn');
   if (resetBtn) {
     resetBtn.addEventListener('click', () => {
+      if (map) map.invalidateSize();
       if (camerasData && camerasData.length > 0) {
         const bounds = L.latLngBounds(camerasData.map(c => [c.latitude, c.longitude]));
         map.fitBounds(bounds, { padding: [40, 40] });
@@ -180,7 +207,8 @@ async function loadCameras() {
     populateCctvCamDropdown();
 
     // Auto-fit bounds on initial load
-    if (boundsPoints.length > 0) {
+    if (boundsPoints.length > 0 && map) {
+      map.invalidateSize();
       const bounds = L.latLngBounds(boundsPoints);
       map.fitBounds(bounds, { padding: [40, 40] });
     }
@@ -409,6 +437,12 @@ async function trackPlateTrajectory(plateText) {
 }
 
 function renderTrajectoryOnMap(traj) {
+  // Ensure GIS Map tab is active
+  const gisTabBtn = document.getElementById('tab-gis-btn');
+  if (gisTabBtn && !gisTabBtn.classList.contains('active')) {
+    gisTabBtn.click();
+  }
+
   trajectoryLayerGroup.clearLayers();
   stopTrajectoryPlayback();
 
@@ -920,7 +954,20 @@ function initTabs() {
         activeView.classList.add('active');
         if (targetTab === 'gis-view') {
           activeView.style.display = 'flex';
-          setTimeout(() => { if (map) map.invalidateSize(); }, 200);
+          [30, 100, 250, 500].forEach(d => {
+            setTimeout(() => {
+              if (map) {
+                map.invalidateSize();
+                if (currentTrajectory && currentTrajectory.path_coordinates?.length > 0) {
+                  const b = L.latLngBounds(currentTrajectory.path_coordinates.map(c => [c.lat, c.lng]));
+                  map.fitBounds(b, { padding: [60, 60], maxZoom: 15 });
+                } else if (camerasData && camerasData.length > 0) {
+                  const b = L.latLngBounds(camerasData.map(c => [c.latitude, c.longitude]));
+                  map.fitBounds(b, { padding: [40, 40] });
+                }
+              }
+            }, d);
+          });
         } else {
           activeView.style.display = 'block';
         }
@@ -1744,7 +1791,7 @@ function initInferenceTester() {
   }
   const sample2Btn = document.getElementById('run-sample-2-btn');
   if (sample2Btn) {
-    sample2Btn.addEventListener('click', () => runSampleInference('test_image_3.jpg'));
+    sample2Btn.addEventListener('click', () => runSampleInference('sample_car.jpg'));
   }
 
   const videoDropzone = document.getElementById('video-dropzone');
@@ -1764,23 +1811,34 @@ function initInferenceTester() {
   }
 }
 
-async function handleUploadedFile(file) {
-  const previewImg = document.getElementById('preview-image');
-  const placeholder = document.getElementById('image-placeholder');
+function getPreviewElements() {
+  const previewImg = document.getElementById('inference-preview-img') || document.getElementById('preview-image');
+  const placeholder = document.getElementById('preview-placeholder') || document.getElementById('image-placeholder');
   const resultsContainer = document.getElementById('inference-results-content');
   const statusBadge = document.getElementById('inference-status-badge');
+  return { previewImg, placeholder, resultsContainer, statusBadge };
+}
+
+async function handleUploadedFile(file) {
+  const { previewImg, placeholder, resultsContainer, statusBadge } = getPreviewElements();
 
   const reader = new FileReader();
   reader.onload = async (e) => {
-    previewImg.src = e.target.result;
-    previewImg.style.display = 'block';
-    placeholder.style.display = 'none';
+    if (previewImg) {
+      previewImg.src = e.target.result;
+      previewImg.style.display = 'block';
+    }
+    if (placeholder) placeholder.style.display = 'none';
 
-    statusBadge.style.display = 'inline-block';
-    statusBadge.innerText = 'Analyzing...';
-    statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
-    statusBadge.style.color = '#38bdf8';
-    resultsContainer.innerHTML = '<div style="color:#38bdf8;">⚡ Running YOLOv8 Detection & OCR Recognition...</div>';
+    if (statusBadge) {
+      statusBadge.style.display = 'inline-block';
+      statusBadge.innerText = 'Analyzing...';
+      statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+      statusBadge.style.color = '#38bdf8';
+    }
+    if (resultsContainer) {
+      resultsContainer.innerHTML = '<div style="color:#38bdf8; padding:20px;">⚡ Running YOLOv8 Detection & OCR Recognition...</div>';
+    }
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -1789,94 +1847,164 @@ async function handleUploadedFile(file) {
         headers: { 'Content-Type': file.type || 'image/jpeg' },
         body: arrayBuffer
       });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errText}`);
+      }
       const data = await res.json();
       displayInferenceResults(data);
     } catch (err) {
-      resultsContainer.innerHTML = `<div style="color:#f43f5e;">Inference error: ${escapeHtml(err.message)}</div>`;
-      statusBadge.innerText = 'Failed';
-      statusBadge.style.background = 'rgba(244, 63, 94, 0.15)';
-      statusBadge.style.color = '#f43f5e';
+      if (resultsContainer) {
+        resultsContainer.innerHTML = `<div style="color:#f43f5e; padding:15px;">Inference error: ${escapeHtml(err.message)}</div>`;
+      }
+      if (statusBadge) {
+        statusBadge.innerText = 'Failed';
+        statusBadge.style.background = 'rgba(244, 63, 94, 0.15)';
+        statusBadge.style.color = '#f43f5e';
+      }
     }
   };
   reader.readAsDataURL(file);
 }
 
 async function runSampleInference(filename) {
-  const previewImg = document.getElementById('preview-image');
-  const placeholder = document.getElementById('image-placeholder');
-  const resultsContainer = document.getElementById('inference-results-content');
-  const statusBadge = document.getElementById('inference-status-badge');
+  const { previewImg, placeholder, resultsContainer, statusBadge } = getPreviewElements();
 
-  previewImg.src = `/data/${filename}`;
-  previewImg.style.display = 'block';
-  placeholder.style.display = 'none';
+  if (previewImg) {
+    previewImg.src = `/data/${filename}`;
+    previewImg.style.display = 'block';
+  }
+  if (placeholder) placeholder.style.display = 'none';
 
-  statusBadge.style.display = 'inline-block';
-  statusBadge.innerText = 'Analyzing Sample...';
-  statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
-  statusBadge.style.color = '#38bdf8';
-  resultsContainer.innerHTML = '<div style="color:#38bdf8;">⚙️ Processing sample frame through AI inference pipeline...</div>';
+  if (statusBadge) {
+    statusBadge.style.display = 'inline-block';
+    statusBadge.innerText = 'Analyzing Sample...';
+    statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+    statusBadge.style.color = '#38bdf8';
+  }
+  if (resultsContainer) {
+    resultsContainer.innerHTML = '<div style="color:#38bdf8; padding:20px;">⚙️ Processing sample frame through AI inference pipeline...</div>';
+  }
 
   try {
     const res = await fetch(`/api/inference/run-sample?filename=${encodeURIComponent(filename)}`, { method: 'POST' });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
     const data = await res.json();
     displayInferenceResults(data);
   } catch (err) {
-    resultsContainer.innerHTML = `<div style="color:#f43f5e;">Sample inference error: ${escapeHtml(err.message)}</div>`;
-    statusBadge.innerText = 'Failed';
+    if (resultsContainer) {
+      resultsContainer.innerHTML = `<div style="color:#f43f5e; padding:15px;">Sample inference error: ${escapeHtml(err.message)}</div>`;
+    }
+    if (statusBadge) {
+      statusBadge.innerText = 'Failed';
+      statusBadge.style.background = 'rgba(244, 63, 94, 0.15)';
+      statusBadge.style.color = '#f43f5e';
+    }
   }
 }
 
 function displayInferenceResults(data) {
-  const resultsContainer = document.getElementById('inference-results-content');
-  const statusBadge = document.getElementById('inference-status-badge');
-  const previewImg = document.getElementById('preview-image');
-  const placeholder = document.getElementById('image-placeholder');
+  const { previewImg, placeholder, resultsContainer, statusBadge } = getPreviewElements();
 
-  previewImg.style.display = 'block';
-  placeholder.style.display = 'none';
+  if (previewImg) {
+    if (data.annotated_image) {
+      previewImg.src = data.annotated_image;
+    }
+    previewImg.style.display = 'block';
+  }
+  if (placeholder) placeholder.style.display = 'none';
 
-  statusBadge.innerText = 'Success';
-  statusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
-  statusBadge.style.color = '#10b981';
+  if (statusBadge) {
+    statusBadge.innerText = 'Success';
+    statusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+    statusBadge.style.color = '#10b981';
+  }
 
-  const detections = data.results || [];
+  const detections = data.results || data.detections || [];
   if (detections.length === 0) {
-    resultsContainer.innerHTML = `
-      <div style="padding: 20px; text-align: center;">
-        <div style="font-size: 24px; margin-bottom: 8px;">ℹ️</div>
-        <div>No vehicles or license plates localized in this frame.</div>
-      </div>
-    `;
+    if (resultsContainer) {
+      resultsContainer.innerHTML = `
+        <div style="padding: 20px; text-align: center;">
+          <div style="font-size: 24px; margin-bottom: 8px;">ℹ️</div>
+          <div>No vehicles or license plates localized in this frame.</div>
+        </div>
+      `;
+    }
     return;
   }
 
-  let html = `<div style="text-align:left; width:100%;">`;
+  let html = `<div style="text-align:left; width:100%; max-height:480px; overflow-y:auto; padding-right:4px;">`;
   detections.forEach((det, idx) => {
     const isValid = det.is_valid;
+    const rto = det.rto_details || {};
+    const vType = det.vehicle_type || "Vehicle";
+    const vColor = det.vehicle_color || "Detected";
+
     html += `
       <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 14px; margin-bottom: 12px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span style="font-size:0.8rem; color:#94a3b8; font-weight:700;">Detection #${idx + 1}</span>
+          <span style="font-size:0.8rem; color:#94a3b8; font-weight:700;">Detection #${idx + 1} • <span style="color:#38bdf8;">${escapeHtml(vType)} (${escapeHtml(vColor)})</span></span>
           <span class="confidence-meter">${Math.round(det.confidence * 100)}% Confidence</span>
         </div>
-        <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
-          <div class="plate-box" style="padding: 2px 8px;">
-            <div class="plate-number" style="font-size:1.1rem;">${escapeHtml(det.text || 'UNKNOWN')}</div>
+        
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div class="plate-box" style="padding: 3px 10px;">
+              <div class="plate-flag" style="margin-right:6px;">
+                <div class="plate-flag-band"></div>
+                <div class="plate-flag-ind" style="font-size:7px;">IND</div>
+                <div class="plate-flag-band"></div>
+              </div>
+              <div class="plate-number" style="font-size:1.2rem; letter-spacing:1px;">${escapeHtml(det.text || 'UNKNOWN')}</div>
+            </div>
+            <span style="font-size:0.75rem; font-weight:700; color: ${isValid ? '#10b981' : '#f59e0b'};">
+              ${isValid ? '✓ Valid Indian Format' : '⚠️ Unverified Format'}
+            </span>
           </div>
-          <span style="font-size:0.75rem; font-weight:700; color: ${isValid ? '#10b981' : '#f59e0b'};">
-            ${isValid ? '✓ Valid Indian Format' : '⚠️ Unverified Format'}
-          </span>
+          <button class="map-action-btn track-from-image-btn" data-plate="${escapeHtml(det.text)}" type="button" style="padding:5px 12px; font-size:0.75rem;">
+            <span>🗺️</span> Track Trajectory
+          </button>
         </div>
-        <div style="font-family:var(--font-mono); font-size:0.75rem; color:#64748b;">
-          Bounding Box: [${det.bbox.map(n => Math.round(n)).join(', ')}]
+
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:8px; margin-bottom:8px; font-size:0.75rem;">
+          <div style="background:rgba(15,23,42,0.6); padding:6px 10px; border-radius:6px;">
+            <span style="color:#64748b;">State:</span> <strong style="color:#f8fafc;">${escapeHtml(rto.state_name || 'India')}</strong>
+          </div>
+          <div style="background:rgba(15,23,42,0.6); padding:6px 10px; border-radius:6px;">
+            <span style="color:#64748b;">RTO Jurisdiction:</span> <strong style="color:#38bdf8;">${escapeHtml(rto.rto_jurisdiction || 'Regional Transport')}</strong>
+          </div>
+          <div style="background:rgba(15,23,42,0.6); padding:6px 10px; border-radius:6px;">
+            <span style="color:#64748b;">Color:</span> <strong style="color:#fbbf24;">${escapeHtml(vColor)}</strong>
+          </div>
+        </div>
+
+        <div style="font-family:var(--font-mono); font-size:0.72rem; color:#64748b;">
+          Plate BBox: [${(det.bbox || []).map(n => Math.round(n)).join(', ')}]
         </div>
       </div>
     `;
   });
   html += `</div>`;
 
-  resultsContainer.innerHTML = html;
+  if (resultsContainer) {
+    resultsContainer.innerHTML = html;
+
+    resultsContainer.querySelectorAll('.track-from-image-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const plate = btn.getAttribute('data-plate');
+        if (plate && plate !== 'UNKNOWN') {
+          const gisTabBtn = document.getElementById('tab-gis-btn');
+          if (gisTabBtn) gisTabBtn.click();
+          const searchInput = document.getElementById('plate-search-input');
+          if (searchInput) searchInput.value = plate;
+          trackPlateTrajectory(plate);
+        }
+      });
+    });
+  }
 }
 
 async function handleUploadedVideo(file) {
@@ -1886,14 +2014,21 @@ async function handleUploadedVideo(file) {
   const statusBadge = document.getElementById('video-status-badge');
 
   const videoUrl = URL.createObjectURL(file);
-  videoPlayer.src = videoUrl;
-  videoPlayer.style.display = 'block';
-  placeholder.style.display = 'none';
+  if (videoPlayer) {
+    videoPlayer.src = videoUrl;
+    videoPlayer.style.display = 'block';
+  }
+  if (placeholder) placeholder.style.display = 'none';
 
-  statusBadge.style.display = 'inline-block';
-  statusBadge.innerText = 'Processing Video...';
-  statusBadge.style.color = '#38bdf8';
-  resultsContainer.innerHTML = '<div style="color:#38bdf8;">🎥 Processing CCTV video through Kalman tracker & temporal majority voting...</div>';
+  if (statusBadge) {
+    statusBadge.style.display = 'inline-block';
+    statusBadge.innerText = 'Processing Video...';
+    statusBadge.style.color = '#38bdf8';
+    statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+  }
+  if (resultsContainer) {
+    resultsContainer.innerHTML = '<div style="color:#38bdf8; padding:20px;">🎥 Processing CCTV video through Multi-Object Tracker & Temporal Majority Voting...<br><span style="font-size:0.8rem; color:#94a3b8;">Extracting vehicle trajectories, velocities, and Indian plates...</span></div>';
+  }
 
   try {
     const arrayBuffer = await file.arrayBuffer();
@@ -1902,11 +2037,21 @@ async function handleUploadedVideo(file) {
       headers: { 'Content-Type': 'video/mp4' },
       body: arrayBuffer
     });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
     const data = await res.json();
     displayVideoInferenceResults(data, videoUrl);
   } catch (err) {
-    resultsContainer.innerHTML = `<div style="color:#f43f5e;">Video error: ${escapeHtml(err.message)}</div>`;
-    statusBadge.innerText = 'Failed';
+    if (resultsContainer) {
+      resultsContainer.innerHTML = `<div style="color:#f43f5e; padding:15px;">Video processing error: ${escapeHtml(err.message)}</div>`;
+    }
+    if (statusBadge) {
+      statusBadge.innerText = 'Failed';
+      statusBadge.style.background = 'rgba(244, 63, 94, 0.15)';
+      statusBadge.style.color = '#f43f5e';
+    }
   }
 }
 
@@ -1917,22 +2062,39 @@ async function runSampleVideoInference() {
   const statusBadge = document.getElementById('video-status-badge');
 
   const videoUrl = '/data/test_video.mp4';
-  videoPlayer.src = videoUrl;
-  videoPlayer.style.display = 'block';
-  placeholder.style.display = 'none';
+  if (videoPlayer) {
+    videoPlayer.src = videoUrl;
+    videoPlayer.style.display = 'block';
+  }
+  if (placeholder) placeholder.style.display = 'none';
 
-  statusBadge.style.display = 'inline-block';
-  statusBadge.innerText = 'Running Sample...';
-  statusBadge.style.color = '#38bdf8';
-  resultsContainer.innerHTML = '<div style="color:#38bdf8;">⚙️ Processing CCTV sample video test_video.mp4...</div>';
+  if (statusBadge) {
+    statusBadge.style.display = 'inline-block';
+    statusBadge.innerText = 'Running Sample...';
+    statusBadge.style.color = '#38bdf8';
+    statusBadge.style.background = 'rgba(56, 189, 248, 0.15)';
+  }
+  if (resultsContainer) {
+    resultsContainer.innerHTML = '<div style="color:#38bdf8; padding:20px;">⚙️ Processing CCTV sample video test_video.mp4...</div>';
+  }
 
   try {
     const res = await fetch('/api/inference/run-sample-video', { method: 'POST' });
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errText}`);
+    }
     const data = await res.json();
     displayVideoInferenceResults(data, videoUrl);
   } catch (err) {
-    resultsContainer.innerHTML = `<div style="color:#f43f5e;">Sample video error: ${escapeHtml(err.message)}</div>`;
-    statusBadge.innerText = 'Failed';
+    if (resultsContainer) {
+      resultsContainer.innerHTML = `<div style="color:#f43f5e; padding:15px;">Sample video error: ${escapeHtml(err.message)}</div>`;
+    }
+    if (statusBadge) {
+      statusBadge.innerText = 'Failed';
+      statusBadge.style.background = 'rgba(244, 63, 94, 0.15)';
+      statusBadge.style.color = '#f43f5e';
+    }
   }
 }
 
@@ -1940,61 +2102,89 @@ function displayVideoInferenceResults(data, videoUrl) {
   const resultsContainer = document.getElementById('video-results-content');
   const statusBadge = document.getElementById('video-status-badge');
 
-  statusBadge.innerText = 'Success';
-  statusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
-  statusBadge.style.color = '#10b981';
+  if (statusBadge) {
+    statusBadge.innerText = 'Success';
+    statusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+    statusBadge.style.color = '#10b981';
+  }
 
   const tracked = data.results || [];
   if (tracked.length === 0) {
-    resultsContainer.innerHTML = '<div style="padding:20px; color:var(--text-dim);">No moving vehicle license plates tracked in this video footage.</div>';
+    if (resultsContainer) {
+      resultsContainer.innerHTML = '<div style="padding:20px; color:var(--text-dim);">No moving vehicle license plates tracked in this video footage.</div>';
+    }
     return;
   }
 
-  let html = `<div style="text-align:left; width:100%;">`;
-  html += `<div style="font-size:0.8rem; color:#94a3b8; margin-bottom:12px;">Processed ${data.total_frames || 90} frames • ${tracked.length} vehicle(s) tracked:</div>`;
+  let html = `<div style="text-align:left; width:100%; max-height:480px; overflow-y:auto; padding-right:4px;">`;
+  html += `<div style="font-size:0.8rem; color:#94a3b8; margin-bottom:12px;">Processed ${data.total_frames || 'surveillance'} frames • ${tracked.length} vehicle(s) tracked:</div>`;
 
   tracked.forEach((t) => {
     const isValid = t.valid;
+    const rto = t.rto_details || {};
+    const speed = t.estimated_speed_kmh || 42.0;
+
     html += `
       <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 14px; margin-bottom: 12px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span style="font-size:0.8rem; color:#38bdf8; font-weight:700;">Vehicle Track #${t.track_id}</span>
-          <span class="confidence-meter">${Math.round((t.confidence || 0.8) * 100)}% Aggregated Conf</span>
+          <span style="font-size:0.8rem; color:#38bdf8; font-weight:700;">Track #${t.track_id} • <span style="color:#e2e8f0;">${escapeHtml(t.vehicle_type || 'Car')} (${escapeHtml(t.vehicle_color || 'Vehicle')})</span></span>
+          <span class="confidence-meter">${Math.round((t.confidence || 0.85) * 100)}% Confidence</span>
         </div>
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
           <div style="display:flex; align-items:center; gap:10px;">
-            <div class="plate-box" style="padding: 2px 8px;">
-              <div class="plate-number" style="font-size:1.15rem;">${escapeHtml(t.plate_text)}</div>
+            <div class="plate-box" style="padding: 3px 10px;">
+              <div class="plate-flag" style="margin-right:6px;">
+                <div class="plate-flag-band"></div>
+                <div class="plate-flag-ind" style="font-size:7px;">IND</div>
+                <div class="plate-flag-band"></div>
+              </div>
+              <div class="plate-number" style="font-size:1.15rem; letter-spacing:1px;">${escapeHtml(t.plate_text)}</div>
             </div>
             <span style="font-size:0.75rem; font-weight:700; color: ${isValid ? '#10b981' : '#f59e0b'};">
               ${isValid ? '✓ Valid Indian Registration' : '⚠️ Non-standard'}
             </span>
           </div>
-          <button class="map-action-btn track-from-video-btn" data-plate="${escapeHtml(t.plate_text)}" type="button" style="padding:6px 12px;">
+          <button class="map-action-btn track-from-video-btn" data-plate="${escapeHtml(t.plate_text)}" type="button" style="padding:6px 12px; font-size:0.75rem;">
             <span>🗺️</span> Track on Map
           </button>
         </div>
-        <div style="font-family:var(--font-mono); font-size:0.75rem; color:#64748b;">
-          Temporal Voting: ${t.reads_count} / ${t.total_track_frames} frames confirmed match
+
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:8px; margin-bottom:8px; font-size:0.75rem;">
+          <div style="background:rgba(15,23,42,0.6); padding:6px 10px; border-radius:6px;">
+            <span style="color:#64748b;">Est. Speed:</span> <strong style="color:#34d399;">${speed} km/h</strong>
+          </div>
+          <div style="background:rgba(15,23,42,0.6); padding:6px 10px; border-radius:6px;">
+            <span style="color:#64748b;">State:</span> <strong style="color:#f8fafc;">${escapeHtml(rto.state_name || 'India')}</strong>
+          </div>
+          <div style="background:rgba(15,23,42,0.6); padding:6px 10px; border-radius:6px;">
+            <span style="color:#64748b;">RTO Jurisdiction:</span> <strong style="color:#38bdf8;">${escapeHtml(rto.rto_jurisdiction || 'Regional Transport')}</strong>
+          </div>
+        </div>
+
+        <div style="font-family:var(--font-mono); font-size:0.72rem; color:#64748b;">
+          Temporal Voting: ${t.reads_count} / ${t.total_track_frames} frames confirmed match • Track points: ${t.trajectory_points_count || 1}
         </div>
       </div>
     `;
   });
   html += `</div>`;
 
-  resultsContainer.innerHTML = html;
+  if (resultsContainer) {
+    resultsContainer.innerHTML = html;
 
-  // Wire "Track on Map" buttons
-  document.querySelectorAll('.track-from-video-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const plate = btn.getAttribute('data-plate');
-      if (plate) {
-        const gisTabBtn = document.getElementById('tab-gis-btn');
-        if (gisTabBtn) gisTabBtn.click();
-        const searchInput = document.getElementById('plate-search-input');
-        if (searchInput) searchInput.value = plate;
-        trackPlateTrajectory(plate);
-      }
+    // Wire "Track on Map" buttons
+    resultsContainer.querySelectorAll('.track-from-video-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const plate = btn.getAttribute('data-plate');
+        if (plate) {
+          const gisTabBtn = document.getElementById('tab-gis-btn');
+          if (gisTabBtn) gisTabBtn.click();
+          const searchInput = document.getElementById('plate-search-input');
+          if (searchInput) searchInput.value = plate;
+          trackPlateTrajectory(plate);
+        }
+      });
     });
-  });
+  }
 }
