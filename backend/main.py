@@ -141,6 +141,12 @@ app.include_router(websocket_router)
 # Serve Frontend static assets
 FRONTEND_DIR = os.path.join(BASE_DIR, "frontend")
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Suppress browser favicon 404 errors."""
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
 @app.get("/api/health")
 def health_check():
     return {

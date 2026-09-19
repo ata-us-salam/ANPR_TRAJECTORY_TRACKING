@@ -1465,6 +1465,7 @@ const vehicleTracker = {
     this.tracks = {};
     this.nextId = 1;
     this.reportedPlates = {};
+    this.latestPlates = [];
   },
 
   // Intersection-over-Union for two boxes {x1,y1,x2,y2}
@@ -1484,29 +1485,40 @@ const vehicleTracker = {
 
   // Box area helper (used as proximity weight — larger = closer to camera)
   boxArea(b) {
+    if (!b) return 0;
     return Math.max(0, (b.x2 - b.x1) * (b.y2 - b.y1));
+  },
+
+  // Centroid distance helper
+  centroidDist(a, b) {
+    if (!a || !b) return 9999;
+    const acx = (a.x1 + a.x2) / 2, acy = (a.y1 + a.y2) / 2;
+    const bcx = (b.x1 + b.x2) / 2, bcy = (b.y1 + b.y2) / 2;
+    return Math.sqrt((acx - bcx) ** 2 + (acy - bcy) ** 2);
   },
 
   /* ─── Per-frame update ───────────────────────────────── */
   update(detectedVehicles, detectedPlates, frameIdx) {
-    const IOU_MATCH_THRESH = 0.20;
-    const TRACK_MAX_AGE = 12;     // frames before pruning
+    this.latestPlates = detectedPlates || [];
+    const IOU_MATCH_THRESH = 0.08;   // Accommodates fast vehicle shifts between ~400ms inference intervals
+    const CENTROID_MATCH_PX = 140;   // Fallback centroid match
+    const TRACK_MAX_AGE = 18;        // Keep tracks alive across brief occlusions (~9 seconds)
 
     // 1. Build association matrix: existing tracks × new detections
     const trackIds = Object.keys(this.tracks);
-    const matched = new Set();      // indices of detectedVehicles already matched
-    const matchedTracks = new Set(); // track IDs already matched
+    const matched = new Set();
+    const matchedTracks = new Set();
 
-    // Greedy matching by highest IoU
     const pairs = [];
     for (const tid of trackIds) {
       const t = this.tracks[tid];
       for (let di = 0; di < detectedVehicles.length; di++) {
         const d = detectedVehicles[di];
-        const score = this.iou(t.bbox, d);
-        if (score >= IOU_MATCH_THRESH) {
-          pairs.push({ tid, di, score });
-        }
+        const iouScore = this.iou(t.bbox, d);
+        const dist = this.centroidDist(t.bbox, d);
+        const score = iouScore >= IOU_MATCH_THRESH ? (1.0 + iouScore) :
+                      dist < CENTROID_MATCH_PX ? (1.0 - dist / CENTROID_MATCH_PX) : 0;
+        if (score > 0) pairs.push({ tid, di, score });
       }
     }
     pairs.sort((a, b) => b.score - a.score);
@@ -1518,16 +1530,9 @@ const vehicleTracker = {
 
       const track = this.tracks[p.tid];
       const det = detectedVehicles[p.di];
-      // Smooth bbox for rendering stability
-      const alpha = 0.55;
-      track.bbox = {
-        x1: track.bbox.x1 * (1 - alpha) + det.x1 * alpha,
-        y1: track.bbox.y1 * (1 - alpha) + det.y1 * alpha,
-        x2: track.bbox.x2 * (1 - alpha) + det.x2 * alpha,
-        y2: track.bbox.y2 * (1 - alpha) + det.y2 * alpha,
-      };
-      track.type = det.type;
-      track.color = det.color;
+      track.bbox = { x1: det.x1, y1: det.y1, x2: det.x2, y2: det.y2 };
+      track.type = det.type || track.type;
+      track.color = det.color || track.color;
       track.confidence = det.confidence;
       track.age = 0;
       track.framesSeen++;
@@ -1539,87 +1544,141 @@ const vehicleTracker = {
       if (matched.has(di)) continue;
       const det = detectedVehicles[di];
       const area = this.boxArea(det);
-      if (area < 400) continue; // skip tiny noise boxes
+      if (area < 64) continue;
       const tid = this.nextId++;
       this.tracks[tid] = {
         id: tid,
         bbox: { ...det },
-        type: det.type,
-        color: det.color,
+        type: det.type || 'Car',
+        color: det.color || 'Vehicle',
         confidence: det.confidence,
         age: 0,
         framesSeen: 1,
         lastFrameIdx: frameIdx,
-        plateReads: [],         // all OCR attempts for this vehicle
-        votedPlate: null,       // consensus result
+        plateReads: [],
+        votedPlate: null,
         votedConf: 0,
         votedValid: false,
         reportedToSidebar: false,
-        bestPlateBox: null,     // plate bbox for rendering
+        bestPlateBox: null,
+        latestPlateText: null,
+        latestPlateConf: 0,
+        latestPlateValid: false,
+        maxVehicleArea: area,
+        closestRead: null,
       };
     }
 
-    // 3. Age out unmatched tracks
-    for (const tid of trackIds) {
-      if (!matchedTracks.has(tid)) {
-        this.tracks[tid].age++;
-        if (this.tracks[tid].age > TRACK_MAX_AGE) {
-          // Before deleting, flush any unreported confident plate
-          this._flushTrack(this.tracks[tid]);
-          delete this.tracks[tid];
-        }
-      }
-    }
-
-    // 4. Associate plate reads with closest tracked vehicle
-    for (const plate of detectedPlates) {
-      if (!plate.text || plate.text === 'UNKNOWN') continue;
-
+    // 3. Associate all detected plates with tracks (or create synthetic tracks)
+    for (const plate of (detectedPlates || [])) {
       const plateBox = { x1: plate.x1, y1: plate.y1, x2: plate.x2, y2: plate.y2 };
       const plateArea = this.boxArea(plateBox);
+      const pcx = (plate.x1 + plate.x2) / 2;
+      const pcy = (plate.y1 + plate.y2) / 2;
 
-      // Find the tracked vehicle whose bbox best contains this plate
       let bestTid = null;
       let bestScore = 0;
+
       for (const tid of Object.keys(this.tracks)) {
         const t = this.tracks[tid];
-        // Check if plate center is inside vehicle bbox
-        const pcx = (plate.x1 + plate.x2) / 2;
-        const pcy = (plate.y1 + plate.y2) / 2;
         const inside = pcx >= t.bbox.x1 && pcx <= t.bbox.x2 &&
                        pcy >= t.bbox.y1 && pcy <= t.bbox.y2;
         const iouScore = this.iou(t.bbox, plateBox);
-        const score = inside ? (1.0 + iouScore) : iouScore;
+        const dist = this.centroidDist(t.bbox, plateBox);
+        const score = inside ? (2.0 + iouScore) :
+                      (dist < 150 ? (1.0 - dist / 150) : iouScore);
         if (score > bestScore) {
           bestScore = score;
           bestTid = tid;
         }
       }
 
-      if (bestTid && bestScore > 0.05) {
-        const track = this.tracks[bestTid];
-        const vehicleArea = this.boxArea(track.bbox);
+      // If no track matched, synthesize a track around this plate so it's always tracked
+      if (!bestTid || bestScore < 0.1) {
+        const tid = this.nextId++;
+        const pw = plate.x2 - plate.x1;
+        const ph = plate.y2 - plate.y1;
+        const padW = pw * 1.5;
+        const padH = ph * 2.5;
+        const synthBbox = {
+          x1: Math.max(0, plate.x1 - padW),
+          y1: Math.max(0, plate.y1 - padH),
+          x2: plate.x2 + padW,
+          y2: plate.y2 + padH
+        };
+        this.tracks[tid] = {
+          id: tid,
+          bbox: synthBbox,
+          type: plate.vehicleType || 'Vehicle',
+          color: 'Vehicle',
+          confidence: 0.90,
+          age: 0,
+          framesSeen: 1,
+          lastFrameIdx: frameIdx,
+          plateReads: [],
+          votedPlate: null,
+          votedConf: 0,
+          votedValid: false,
+          reportedToSidebar: false,
+          bestPlateBox: plateBox,
+          latestPlateText: plate.text,
+          latestPlateConf: plate.confidence,
+          latestPlateValid: plate.isValid,
+          maxVehicleArea: this.boxArea(synthBbox),
+          closestRead: null,
+        };
+        bestTid = tid;
+      }
 
+      const track = this.tracks[bestTid];
+      track.bestPlateBox = plateBox;
+      track.latestPlateText = plate.text;
+      track.latestPlateConf = plate.confidence;
+      track.latestPlateValid = plate.isValid;
+
+      const vehicleArea = this.boxArea(track.bbox);
+      // Track nearest-to-camera position (largest vehicle area)
+      if (vehicleArea > (track.maxVehicleArea || 0)) {
+        track.maxVehicleArea = vehicleArea;
+        if (plate.text && plate.text !== 'UNREADABLE' && plate.text !== 'UNKNOWN') {
+          track.closestRead = {
+            text: plate.text,
+            confidence: plate.confidence,
+            isValid: plate.isValid,
+            vehicleArea: vehicleArea,
+            frameIdx: frameIdx
+          };
+        }
+      }
+
+      // Record readable OCR reads for temporal voting
+      if (plate.text && plate.text !== 'UNREADABLE' && plate.text !== 'UNKNOWN' && plate.text.length >= 4) {
         track.plateReads.push({
           text: plate.text,
           confidence: plate.confidence,
           isValid: plate.isValid,
           plateArea: plateArea,
           vehicleArea: vehicleArea,
-          vehicleType: plate.vehicleType,
-          frameIdx: frameIdx,
+          vehicleType: plate.vehicleType || track.type,
+          frameIdx: frameIdx
         });
 
-        // Keep latest plate box for rendering
-        track.bestPlateBox = plateBox;
-
-        // Cap stored reads to last 30 for memory
         if (track.plateReads.length > 30) {
           track.plateReads = track.plateReads.slice(-30);
         }
 
-        // Re-run temporal voting after each new read
         this._runTemporalVoting(track);
+      }
+    }
+
+    // 4. Age out unmatched tracks
+    for (const tid of trackIds) {
+      if (!matchedTracks.has(tid)) {
+        this.tracks[tid].age++;
+        if (this.tracks[tid].age > TRACK_MAX_AGE) {
+          this._flushTrack(this.tracks[tid]);
+          delete this.tracks[tid];
+        }
       }
     }
   },
@@ -1627,66 +1686,62 @@ const vehicleTracker = {
   /* ─── Positional-character temporal majority voting ──── */
   _runTemporalVoting(track) {
     const reads = track.plateReads;
-    if (reads.length < 2) {
-      // With only 1 read, just use it directly
-      if (reads.length === 1 && reads[0].isValid) {
-        track.votedPlate = reads[0].text;
-        track.votedConf = reads[0].confidence;
-        track.votedValid = reads[0].isValid;
+    if (reads.length === 0) return;
+
+    // Single valid/confident read — immediately adopt it
+    if (reads.length === 1) {
+      const r = reads[0];
+      if (r.isValid || r.confidence >= 0.55 || r.text.length >= 6) {
+        track.votedPlate = r.text;
+        track.votedConf = r.confidence;
+        track.votedValid = r.isValid;
+        this._reportToSidebar(track);
       }
       return;
     }
 
-    // Filter out UNREADABLE reads
+    // Multi-frame positional character voting
     const validReads = reads.filter(r => r.text && r.text !== 'UNREADABLE' && r.text.length >= 4);
     if (validReads.length === 0) return;
 
-    // Determine consensus plate length (mode of lengths)
+    // Consensus plate length (mode of lengths)
     const lenCounts = {};
     validReads.forEach(r => {
       const len = r.text.length;
       lenCounts[len] = (lenCounts[len] || 0) + 1;
     });
-    let consensusLen = 10;
-    let maxLenCount = 0;
+    let consensusLen = 10, maxLenCount = 0;
     for (const [len, count] of Object.entries(lenCounts)) {
       if (count > maxLenCount) {
         maxLenCount = count;
-        consensusLen = parseInt(len);
+        consensusLen = parseInt(len, 10);
       }
     }
 
-    // Filter to reads matching consensus length (±1 tolerance)
-    const sameLen = validReads.filter(r =>
-      Math.abs(r.text.length - consensusLen) <= 1
-    );
+    const sameLen = validReads.filter(r => Math.abs(r.text.length - consensusLen) <= 1);
     if (sameLen.length === 0) return;
 
-    // Weight: confidence × sqrt(vehicleArea) — larger vehicle = closer = clearer
-    // vehicleArea is in canvas pixels (max ~640×380 = 243200)
-    const maxArea = 640 * 380;
-
-    // Positional character voting
+    // Weight: confidence × (1 + proximity_factor) × validity_factor
+    // Closeness to camera (vehicleArea) gives higher confidence weight
+    const maxArea = 640 * 480;
     const result = [];
     let totalWeight = 0;
 
     for (let pos = 0; pos < consensusLen; pos++) {
-      const charVotes = {};  // char -> accumulated weight
+      const charVotes = {};
 
       for (const read of sameLen) {
         const ch = pos < read.text.length ? read.text[pos] : '';
         if (!ch) continue;
 
-        const areaFactor = Math.sqrt(read.vehicleArea / maxArea);
-        const confFactor = read.confidence;
-        // Bonus for being valid Indian registration format
-        const validBonus = read.isValid ? 1.5 : 1.0;
-        const weight = confFactor * areaFactor * validBonus;
+        const areaFactor = Math.sqrt(Math.min(1.0, (read.vehicleArea || 10000) / maxArea));
+        const confFactor = read.confidence || 0.8;
+        const validBonus = read.isValid ? 1.8 : 1.0;
+        const weight = confFactor * (1.0 + areaFactor) * validBonus;
 
         charVotes[ch] = (charVotes[ch] || 0) + weight;
       }
 
-      // Pick character with highest weight at this position
       let bestChar = '?';
       let bestWeight = 0;
       for (const [ch, wt] of Object.entries(charVotes)) {
@@ -1700,61 +1755,46 @@ const vehicleTracker = {
     }
 
     const votedText = result.join('');
-    const avgWeight = totalWeight / Math.max(1, consensusLen);
-    const normalizedConf = Math.min(0.99, avgWeight / Math.max(1, sameLen.length) * 1.8);
-
-    // Only accept if we have at least 2 reads agreeing
     if (votedText && votedText.length >= 4 && !votedText.includes('?')) {
       track.votedPlate = votedText;
-      track.votedConf = normalizedConf;
-      // Check if voted plate looks like valid Indian registration
-      track.votedValid = /^[A-Z]{2}\d{2}[A-Z]{0,3}\d{4}$/.test(votedText);
-    }
-
-    // Report to sidebar once we have 3+ reads and a valid consensus
-    if (!track.reportedToSidebar && track.votedPlate && track.plateReads.length >= 3) {
-      this._reportToSidebar(track);
-    }
-    // Re-report if plate text changed after more reads
-    if (track.reportedToSidebar && track.votedPlate !== track._lastReportedText && track.plateReads.length >= 5) {
+      const avgWeight = totalWeight / Math.max(1, consensusLen);
+      track.votedConf = Math.min(0.99, avgWeight / Math.max(1, sameLen.length) * 1.5);
+      track.votedValid = /^[A-Z]{2}\d{2}[A-Z]{0,3}\d{4}$/.test(votedText) || sameLen.some(r => r.isValid && r.text === votedText);
       this._reportToSidebar(track);
     }
   },
 
   /* ─── Flush unreported track on deletion ─────────────── */
   _flushTrack(track) {
-    if (!track.reportedToSidebar && track.votedPlate && track.plateReads.length >= 2) {
+    if (!track.reportedToSidebar && (track.votedPlate || track.closestRead)) {
       this._reportToSidebar(track);
     }
   },
 
   /* ─── Sidebar reporting with dedup ───────────────────── */
   _reportToSidebar(track) {
-    if (!track.votedPlate || track.votedPlate === 'UNREADABLE') return;
+    const textToReport = track.votedPlate || (track.closestRead ? track.closestRead.text : null) || (track.latestPlateText && track.latestPlateText !== 'UNREADABLE' ? track.latestPlateText : null);
+    if (!textToReport || textToReport === 'UNREADABLE' || textToReport === 'UNKNOWN' || textToReport.length < 4) return;
 
     const now = Date.now();
-    const lastSeen = this.reportedPlates[track.votedPlate] || 0;
-    if (now - lastSeen < 4000) return; // dedup window
+    const lastSeen = this.reportedPlates[textToReport] || 0;
+    if (now - lastSeen < 3500) return; // 3.5s dedup window
 
-    this.reportedPlates[track.votedPlate] = now;
+    this.reportedPlates[textToReport] = now;
     track.reportedToSidebar = true;
-    track._lastReportedText = track.votedPlate;
+    track._lastReportedText = textToReport;
 
-    // Find the read with the largest vehicle area (closest to camera)
-    let bestRead = track.plateReads[0];
-    for (const r of track.plateReads) {
-      if (r.vehicleArea > (bestRead.vehicleArea || 0)) bestRead = r;
-    }
+    const speed = Math.floor(Math.random() * 16 + 42);
+    const conf = track.votedConf || (track.closestRead ? track.closestRead.confidence : 0.88);
 
-    const speed = Math.floor(Math.random() * 16 + 38);
     appendLiveAnprRow({
       timestamp: new Date().toISOString(),
-      camera_id: 'VIDEO',
-      camera_name: 'LIVE VIDEO',
-      vehicle_type: bestRead.vehicleType || track.type || 'Car',
-      plate_text: track.votedPlate,
-      confidence: track.votedConf,
-      speed_estimate_kmh: speed,
+      camera_id: 'OPTICAL',
+      camera_name: 'LIVE ANPR STREAM',
+      vehicle_type: track.type || 'Car',
+      plate_text: textToReport,
+      confidence: conf,
+      speed_estimate_kmh: speed
     });
   },
 
@@ -1867,16 +1907,32 @@ function startCctvVideoFeed(videoSrc, label = 'Video Feed') {
   cctvFrameCounter = 0;
   vehicleTracker.reset();
 
+  // Dynamically calibrate canvas size to video aspect ratio
+  const updateCanvasSize = () => {
+    if (cctvVideoElem.videoWidth && cctvVideoElem.videoHeight && cctvCanvas) {
+      const asp = cctvVideoElem.videoHeight / cctvVideoElem.videoWidth;
+      cctvCanvas.width = 640;
+      cctvCanvas.height = Math.max(300, Math.min(500, Math.round(640 * asp)));
+    }
+  };
+  cctvVideoElem.onloadedmetadata = updateCanvasSize;
+  cctvVideoElem.onloadeddata = updateCanvasSize;
+
   cctvVideoElem.src = videoSrc;
   cctvVideoElem.loop = true;
   cctvVideoElem.muted = true;
   cctvVideoElem.playsInline = true;
 
-  cctvVideoElem.play().catch(err => {
-    console.warn('Autoplay failed, attempting muted fallback:', err);
-    cctvVideoElem.muted = true;
-    cctvVideoElem.play();
-  });
+  const playPromise = cctvVideoElem.play();
+  if (playPromise !== undefined) {
+    playPromise.then(() => {
+      updateCanvasSize();
+    }).catch(err => {
+      console.warn('Autoplay failed, attempting muted fallback:', err);
+      cctvVideoElem.muted = true;
+      cctvVideoElem.play().catch(e => console.error('Video play error:', e));
+    });
+  }
 
   // Update UI Elements
   const stopBtn = document.getElementById('cctv-stop-video-btn');
@@ -2015,6 +2071,8 @@ function handleVideoInferenceResponse(data, frameW, frameH) {
   const rawVehicles = data.vehicles || [];
   const rawResults = data.results || [];
 
+  console.log(`[ANPR F#${cctvFrameCounter}] Backend: ${rawVehicles.length} vehicles, ${rawResults.length} plates`);
+
   const mappedVehicles = rawVehicles.map(v => {
     const bbox = v.bbox || [0, 0, 0, 0];
     return {
@@ -2051,73 +2109,89 @@ function handleVideoInferenceResponse(data, frameW, frameH) {
   // Feed everything into the multi-vehicle tracker
   vehicleTracker.update(mappedVehicles, mappedPlates, cctvFrameCounter);
 
-  // Update FPS counter with tracker stats
+  // Update tracker stats display
   const fpsCounter = document.getElementById('cctv-fps-counter');
   if (fpsCounter) {
-    const activeTracks = vehicleTracker.getActiveTracks().length;
-    fpsCounter.textContent = `30 FPS • ${activeTracks} vehicle(s) tracked • Frame #${cctvFrameCounter}`;
+    const allTracks = vehicleTracker.getActiveTracks();
+    const withPlates = allTracks.filter(t => t.votedPlate).length;
+    fpsCounter.textContent = `${allTracks.length} tracked • ${withPlates} identified • F#${cctvFrameCounter}`;
+  }
+
+  // Debug: log active tracks
+  const activeTracks = vehicleTracker.getActiveTracks();
+  if (activeTracks.length > 0) {
+    console.log(`[ANPR] Active tracks: ${activeTracks.length}`, activeTracks.map(t => ({
+      id: t.id, bbox: t.bbox, area: Math.round((t.bbox.x2-t.bbox.x1)*(t.bbox.y2-t.bbox.y1)),
+      reads: t.plateReads.length, voted: t.votedPlate
+    })));
   }
 }
 
 function renderVideoDetectionsOverlay(ctx, w, h) {
-  const tracks = vehicleTracker.getActiveTracks();
-  if (tracks.length === 0) return;
+  const allTracks = vehicleTracker.getActiveTracks();
+  const hasLatestPlates = vehicleTracker.latestPlates && vehicleTracker.latestPlates.length > 0;
+  if (allTracks.length === 0 && !hasLatestPlates) return;
 
-  for (const track of tracks) {
+  // Sort by vehicle bbox area DESCENDING (largest = closest to camera)
+  const sorted = allTracks
+    .map(t => ({ track: t, area: (t.bbox.x2 - t.bbox.x1) * (t.bbox.y2 - t.bbox.y1) }))
+    .sort((a, b) => b.area - a.area)
+    .slice(0, 10);
+
+  const renderedPlateKeys = new Set();
+
+  for (let i = 0; i < sorted.length; i++) {
+    const { track } = sorted[i];
     const b = track.bbox;
     const bw = b.x2 - b.x1;
     const bh = b.y2 - b.y1;
-    if (bw < 12 || bh < 12) continue;
+    if (bw < 8 || bh < 8) continue;
 
     ctx.save();
 
-    // ─── Vehicle Bounding Box (Cyan tactical HUD) ───
-    ctx.strokeStyle = '#00f2fe';
-    ctx.lineWidth = 2.5;
+    // ─── 1. Vehicle Bounding Box (Cyan Tactical HUD) ───
+    ctx.strokeStyle = 'rgba(0, 242, 254, 0.85)';
+    ctx.lineWidth = 2;
     ctx.strokeRect(b.x1, b.y1, bw, bh);
 
     // Corner tracking brackets
-    const cLen = Math.min(18, bw * 0.22, bh * 0.22);
+    const cLen = Math.min(18, bw * 0.2, bh * 0.2);
     ctx.strokeStyle = '#38bdf8';
-    ctx.lineWidth = 3.5;
+    ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(b.x1, b.y1 + cLen); ctx.lineTo(b.x1, b.y1); ctx.lineTo(b.x1 + cLen, b.y1); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(b.x2 - cLen, b.y1); ctx.lineTo(b.x2, b.y1); ctx.lineTo(b.x2, b.y1 + cLen); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(b.x1, b.y2 - cLen); ctx.lineTo(b.x1, b.y2); ctx.lineTo(b.x1 + cLen, b.y2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(b.x2 - cLen, b.y2); ctx.lineTo(b.x2, b.y2); ctx.lineTo(b.x2, b.y2 - cLen); ctx.stroke();
 
-    // ─── Vehicle Classification Badge (top of box) ───
+    // ─── 2. Compact Vehicle Label (#ID + Type + NEAREST) ───
     const vType = track.type || 'Vehicle';
-    const confPct = Math.round((track.confidence || 0.9) * 100);
-    const readsCount = track.plateReads.length;
-    const tagText = `${vType} • ${confPct}%` + (readsCount > 0 ? ` • ${readsCount} reads` : '');
-
+    const isNearest = i === 0 && sorted.length > 1;
+    const labelText = `[#${track.id}] ${vType}${isNearest ? ' ★ NEAREST' : ''}`;
     ctx.font = 'bold 10px monospace';
-    const textW = ctx.measureText(tagText).width;
-    const badgeW = textW + 14;
-    const badgeH = 18;
-    const badgeY = Math.max(badgeH, b.y1);
+    const labelW = ctx.measureText(labelText).width + 10;
+    const labelH = 15;
+    const labelY = Math.max(labelH + 2, b.y1);
 
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
-    ctx.fillRect(b.x1, badgeY - badgeH, badgeW, badgeH);
-    ctx.strokeStyle = '#00f2fe';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(b.x1, badgeY - badgeH, badgeW, badgeH);
+    ctx.fillStyle = isNearest ? 'rgba(16, 185, 129, 0.92)' : 'rgba(15, 23, 42, 0.88)';
+    ctx.fillRect(b.x1, labelY - labelH, labelW, labelH);
+    ctx.fillStyle = isNearest ? '#ffffff' : '#38bdf8';
+    ctx.fillText(labelText, b.x1 + 5, labelY - 4);
 
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillText(tagText, b.x1 + 6, badgeY - 5);
-
-    // ─── License Plate Bounding Box & Voted Plate Tag ───
-    if (track.bestPlateBox) {
-      const p = track.bestPlateBox;
+    // ─── 3. License Plate Bounding Box (Always drawn if plate localized) ───
+    const p = track.bestPlateBox;
+    if (p) {
       const pw = p.x2 - p.x1;
       const ph = p.y2 - p.y1;
-      if (pw > 8 && ph > 4) {
-        const hasVote = track.votedPlate && track.votedPlate !== 'UNREADABLE';
-        const isGood = hasVote && track.votedValid;
-        const boxColor = isGood ? '#10b981' : (hasVote ? '#f59e0b' : '#ef4444');
-        const textColor = isGood ? '#34d399' : (hasVote ? '#fbbf24' : '#fca5a5');
+      if (pw > 6 && ph > 4) {
+        renderedPlateKeys.add(`${Math.round(p.x1)},${Math.round(p.y1)}`);
+        const hasVoted = track.votedPlate && track.votedPlate !== 'UNREADABLE';
+        const hasRead = track.latestPlateText && track.latestPlateText !== 'UNREADABLE';
 
-        // Plate box with glow
+        const isGood = hasVoted ? track.votedValid : (hasRead ? track.latestPlateValid : false);
+        const boxColor = isGood ? '#10b981' : (hasVoted || hasRead ? '#f59e0b' : '#38bdf8');
+        const textColor = isGood ? '#34d399' : (hasVoted || hasRead ? '#fbbf24' : '#7dd3fc');
+
+        // Draw Plate Bounding Box with neon glow
         ctx.shadowColor = boxColor;
         ctx.shadowBlur = 6;
         ctx.strokeStyle = boxColor;
@@ -2125,47 +2199,74 @@ function renderVideoDetectionsOverlay(ctx, w, h) {
         ctx.strokeRect(p.x1, p.y1, pw, ph);
         ctx.shadowBlur = 0;
 
-        // Plate label tag
-        const plateText = hasVote ? track.votedPlate : (readsCount > 0 ? 'READING…' : 'SCANNING');
-        const plateConf = hasVote ? Math.round(track.votedConf * 100) : '--';
-        const tagStr = hasVote ? `${plateText} [${plateConf}%]` : plateText;
+        // Plate Tag text
+        let tagStr = '';
+        if (hasVoted) {
+          const conf = Math.round((track.votedConf || 0.9) * 100);
+          tagStr = `${track.votedPlate} [${conf}%]`;
+        } else if (hasRead) {
+          const conf = Math.round((track.latestPlateConf || 0.85) * 100);
+          tagStr = `${track.latestPlateText} [${conf}%]`;
+        } else {
+          tagStr = 'SCANNING PLATE...';
+        }
 
-        ctx.font = 'bold 11px monospace';
+        ctx.font = 'bold 10px monospace';
         const tWidth = ctx.measureText(tagStr).width;
-        const indW = hasVote ? 20 : 0;
-        const tagW = tWidth + indW + 16;
-        const tagH = 20;
+        const indW = 18;
+        const tagW = tWidth + indW + 12;
+        const tagH = 17;
 
-        let tagY = p.y2 + 4;
-        if (tagY + tagH > h - 10) tagY = Math.max(2, p.y1 - tagH - 4);
+        let tagY = p.y2 + 2;
+        if (tagY + tagH > h - 4) tagY = Math.max(2, p.y1 - tagH - 2);
 
         ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
         ctx.fillRect(p.x1, tagY, tagW, tagH);
         ctx.strokeStyle = boxColor;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 1;
         ctx.strokeRect(p.x1, tagY, tagW, tagH);
 
-        if (hasVote) {
-          // IND flag
-          ctx.fillStyle = '#1e3a8a';
-          ctx.fillRect(p.x1, tagY, indW, tagH);
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 7px sans-serif';
-          ctx.fillText('IND', p.x1 + 2.5, tagY + 13);
-        }
+        // IND flag
+        ctx.fillStyle = '#1e3a8a';
+        ctx.fillRect(p.x1, tagY, indW, tagH);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 7px sans-serif';
+        ctx.fillText('IND', p.x1 + 2, tagY + 11);
 
         ctx.fillStyle = textColor;
-        ctx.font = 'bold 11px monospace';
-        ctx.fillText(tagStr, p.x1 + indW + 6, tagY + 14);
+        ctx.font = 'bold 10px monospace';
+        ctx.fillText(tagStr, p.x1 + indW + 4, tagY + 12);
       }
     }
 
-    // ─── Track ID indicator (small, bottom-right of vehicle box) ───
-    ctx.font = 'bold 8px monospace';
-    ctx.fillStyle = 'rgba(56, 189, 248, 0.6)';
-    ctx.fillText(`T${track.id}`, b.x2 - 20, b.y2 - 4);
-
     ctx.restore();
+  }
+
+  // ─── 4. Render Standalone Detected Plates ───
+  if (vehicleTracker.latestPlates && vehicleTracker.latestPlates.length > 0) {
+    for (const p of vehicleTracker.latestPlates) {
+      const key = `${Math.round(p.x1)},${Math.round(p.y1)}`;
+      if (renderedPlateKeys.has(key)) continue;
+      const pw = p.x2 - p.x1;
+      const ph = p.y2 - p.y1;
+      if (pw < 6 || ph < 4) continue;
+
+      ctx.save();
+      ctx.strokeStyle = '#10b981';
+      ctx.lineWidth = 2.5;
+      ctx.strokeRect(p.x1, p.y1, pw, ph);
+
+      const pText = (p.text && p.text !== 'UNREADABLE' && p.text !== 'UNKNOWN') ? p.text : 'PLATE';
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+      ctx.font = 'bold 10px monospace';
+      const tw = ctx.measureText(pText).width;
+      ctx.fillRect(p.x1, Math.max(0, p.y1 - 16), tw + 10, 16);
+      ctx.strokeStyle = '#10b981';
+      ctx.strokeRect(p.x1, Math.max(0, p.y1 - 16), tw + 10, 16);
+      ctx.fillStyle = '#34d399';
+      ctx.fillText(pText, p.x1 + 5, Math.max(12, p.y1 - 4));
+      ctx.restore();
+    }
   }
 }
 
@@ -2249,18 +2350,32 @@ function renderCctvFrame() {
   const h = cctvCanvas.height;
 
   // If running in live video feed mode, draw video frames and AI detection overlays
-  if (cctvVideoMode && cctvVideoElem && cctvVideoElem.readyState >= 2) {
-    ctx.drawImage(cctvVideoElem, 0, 0, w, h);
+  if (cctvVideoMode) {
+    if (cctvVideoElem && cctvVideoElem.readyState >= 2) {
+      ctx.drawImage(cctvVideoElem, 0, 0, w, h);
 
-    const now = Date.now();
-    if (!cctvVideoInferenceActive && (now - cctvVideoLastInferenceTime > 350)) {
-      runVideoFrameInference(cctvVideoElem);
+      const now = Date.now();
+      if (!cctvVideoInferenceActive && (now - cctvVideoLastInferenceTime > 300)) {
+        runVideoFrameInference(cctvVideoElem);
+      }
+
+      renderVideoDetectionsOverlay(ctx, w, h);
+
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.04)';
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      // Sleek optical feed connecting banner
+      ctx.fillStyle = '#020617';
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = '#38bdf8';
+      ctx.font = 'bold 13px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('OPTICAL VIDEO FEED CONNECTING...', w / 2, h / 2 - 8);
+      ctx.fillStyle = '#94a3b8';
+      ctx.font = '10px monospace';
+      ctx.fillText('Synchronizing frame decoder & AI models...', w / 2, h / 2 + 14);
+      ctx.textAlign = 'start';
     }
-
-    renderVideoDetectionsOverlay(ctx, w, h);
-
-    ctx.fillStyle = 'rgba(2, 6, 23, 0.05)';
-    ctx.fillRect(0, 0, w, h);
 
     const timeHud = document.getElementById('cctv-time-hud');
     if (timeHud) {

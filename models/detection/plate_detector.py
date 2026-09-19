@@ -84,7 +84,7 @@ class PlateDetector:
             'confidence': 0.60
         }]
 
-    def detect(self, image: np.ndarray, conf_threshold: float = 0.5, imgsz: int = 320):
+    def detect(self, image: np.ndarray, conf_threshold: float = 0.25, imgsz: int = 320):
         """
         Detects license plates in a given image (vehicle crop or full frame).
         Returns a list of dictionaries with bounding box [x1, y1, x2, y2] and confidence.

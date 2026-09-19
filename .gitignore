@@ -61,3 +61,4 @@ dataset/archive*/
 data/debug_plate_crop.jpg
 /inspect_browser.py
 /inspect_dom.py
+cloudflared.exe
