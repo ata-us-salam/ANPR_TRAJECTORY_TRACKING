@@ -162,14 +162,14 @@ class SingleImagePipeline:
             return {"detections": [], "annotated_image": None, "results": []}
 
         # Normalize oversized input images for sub-second CPU inference
-        max_dim = 1280
+        max_dim = 1024
         ih, iw = image.shape[:2]
         if max(ih, iw) > max_dim:
             scale = max_dim / float(max(ih, iw))
             image = cv2.resize(image, (int(iw * scale), int(ih * scale)), interpolation=cv2.INTER_AREA)
 
-        # 1. Detect Vehicles
-        vehicles = self.vehicle_detector.detect(image)
+        # 1. Detect Vehicles with bounded 640px dimension
+        vehicles = self.vehicle_detector.detect(image, imgsz=640)
         print(f"Detected {len(vehicles)} vehicle(s).")
 
         results = []
@@ -189,8 +189,8 @@ class SingleImagePipeline:
             vehicle['vehicle_color'] = v_color
             enriched_vehicles.append(vehicle)
 
-            # 2. Detect License Plates inside vehicle crop
-            plates = self.plate_detector.detect(vehicle_img)
+            # 2. Detect License Plates inside vehicle crop (fast 320px bounding)
+            plates = self.plate_detector.detect(vehicle_img, imgsz=320)
             print(f"  Vehicle {idx+1} ({v_color} {v_type}): Detected {len(plates)} plate(s).")
 
             for p_idx, plate in enumerate(plates):
@@ -199,11 +199,11 @@ class SingleImagePipeline:
                 if plate_img.size == 0:
                     continue
 
-                # 3. Image Enhancement Variants
+                # 3. Streamlined Image Enhancement Variants
                 variants = self.enhancer.preprocess_for_ocr(plate_img)
 
-                # 4. OCR on Variants
-                text, conf = self.ocr_engine.read_from_variants(variants)
+                # 4. Fast OCR with instant early exit on valid plate
+                text, conf = self.ocr_engine.read_from_variants(variants, validator=self.validator)
 
                 # 5. Validation & RTO Extraction
                 cleaned_text = self.validator.clean_text(text)
@@ -227,14 +227,14 @@ class SingleImagePipeline:
 
         # Fallback if no plates localized inside vehicle crops: inspect whole image
         if not results:
-            fallback_plates = self.plate_detector.detect(image)
+            fallback_plates = self.plate_detector.detect(image, imgsz=640)
             for p_idx, plate in enumerate(fallback_plates):
                 px1, py1, px2, py2 = plate['bbox']
                 p_crop = image[py1:py2, px1:px2]
                 if p_crop.size == 0:
                     continue
                 variants = self.enhancer.preprocess_for_ocr(p_crop)
-                text, conf = self.ocr_engine.read_from_variants(variants)
+                text, conf = self.ocr_engine.read_from_variants(variants, validator=self.validator)
                 cleaned_text = self.validator.clean_text(text)
                 is_valid = self.validator.is_valid(cleaned_text)
                 rto_info = self.validator.get_rto_details(cleaned_text)
@@ -271,13 +271,18 @@ class VideoPipeline:
         self.target_fps = target_fps
 
     def run(self, video_path: str) -> List[Dict[str, Any]]:
-        print(f"--- Running Pipeline for Video {video_path} ---")
+        print(f"--- Running Accelerated Pipeline for Video {video_path} ---")
         start_time = datetime.datetime.now()
         
         track_telemetry = {}
 
         for frame_idx, timestamp_sec, frame in self.frame_sampler.sample_frames(video_path):
-            vehicles = self.image_pipeline.vehicle_detector.detect(frame)
+            fh, fw = frame.shape[:2]
+            if max(fh, fw) > 960:
+                scale = 960.0 / max(fh, fw)
+                frame = cv2.resize(frame, (int(fw * scale), int(fh * scale)), interpolation=cv2.INTER_AREA)
+
+            vehicles = self.image_pipeline.vehicle_detector.detect(frame, imgsz=480)
             tracked_vehicles = self.tracker.update(vehicles)
 
             for vehicle in tracked_vehicles:
@@ -307,12 +312,12 @@ class VideoPipeline:
                 track_telemetry[track_id]["trajectory"].append((cx, cy, round(timestamp_sec, 2)))
                 track_telemetry[track_id]["last_seen_sec"] = timestamp_sec
 
-                # Check if this track already has confident valid reads
+                # Skip OCR if this vehicle track already has confident valid reads or enough samples
                 existing_reads = self.voting.track_history.get(track_id, [])
-                if any(r.get('valid') and r.get('conf', 0) >= 0.80 for r in existing_reads) and len(existing_reads) >= 2:
+                if any(r.get('valid') and r.get('conf', 0) >= 0.65 for r in existing_reads) or len(existing_reads) >= 3:
                     continue
 
-                plates = self.image_pipeline.plate_detector.detect(vehicle_img)
+                plates = self.image_pipeline.plate_detector.detect(vehicle_img, imgsz=320)
                 for plate in plates:
                     px1, py1, px2, py2 = plate['bbox']
                     plate_img = vehicle_img[py1:py2, px1:px2]
@@ -320,7 +325,9 @@ class VideoPipeline:
                         continue
 
                     variants = self.image_pipeline.enhancer.preprocess_for_ocr(plate_img)
-                    text, conf = self.image_pipeline.ocr_engine.read_from_variants(variants)
+                    text, conf = self.image_pipeline.ocr_engine.read_from_variants(
+                        variants, validator=self.image_pipeline.validator, fast_mode=True
+                    )
                     cleaned_text = self.image_pipeline.validator.clean_text(text)
                     is_valid = self.image_pipeline.validator.is_valid(cleaned_text)
 
@@ -342,8 +349,8 @@ class VideoPipeline:
                 dy = traj[-1][1] - traj[0][1]
                 pixel_dist = (dx**2 + dy**2) ** 0.5
                 time_span = max(0.2, traj[-1][2] - traj[0][2])
-                # Scaling factor: assuming camera field of view ~ 30 meters across 1280px
-                speed_kmh = min(120.0, max(18.0, round((pixel_dist / 1280.0 * 30.0 / time_span) * 3.6, 1)))
+                # Scaling factor: assuming camera field of view ~ 30 meters across 960px
+                speed_kmh = min(120.0, max(18.0, round((pixel_dist / 960.0 * 30.0 / time_span) * 3.6, 1)))
 
             cleaned_plate = p['plate_text']
             rto_info = self.image_pipeline.validator.get_rto_details(cleaned_plate)

@@ -1,32 +1,37 @@
+import os
+import sys
 import numpy as np
+
+# Global cached EasyOCR reader to avoid redundant re-initializations
+_GLOBAL_EASY_READER = None
 
 class OCREngine:
     def __init__(self, lang=['en']):
+        global _GLOBAL_EASY_READER
         self.last_detected_tokens = []
         self.paddle_ocr = None
         self.easy_reader = None
 
-        # 1. Initialize PaddleOCR with runtime compatibility check
-        try:
-            from paddleocr import PaddleOCR
-            p_engine = PaddleOCR(use_textline_orientation=True, lang='en')
-            # Test run with dummy 32x64 image to verify oneDNN/PIR runtime support
-            dummy = np.zeros((32, 64, 3), dtype=np.uint8)
-            p_engine.ocr(dummy)
-            self.paddle_ocr = p_engine
-            print("[OCR] PaddleOCR engine initialized and verified.")
-        except Exception as e:
-            # Common on Python 3.13 / oneDNN PIR environments
-            print(f"[OCR] PaddleOCR runtime unavailable ({type(e).__name__}); cascading to high-accuracy EasyOCR.")
-            self.paddle_ocr = None
+        # 1. Check PaddleOCR only if explicitly enabled via environment variable
+        if os.getenv("ENABLE_PADDLEOCR", "false").lower() in ("true", "1") and sys.version_info < (3, 13):
+            try:
+                from paddleocr import PaddleOCR
+                self.paddle_ocr = PaddleOCR(use_textline_orientation=True, lang='en')
+                print("[OCR] PaddleOCR engine initialized.")
+            except Exception as e:
+                print(f"[OCR] PaddleOCR unavailable: {e}")
+                self.paddle_ocr = None
 
-        # 2. Initialize EasyOCR
-        try:
-            import easyocr
-            self.easy_reader = easyocr.Reader(lang, gpu=False)
-            print("[OCR] EasyOCR engine initialized successfully.")
-        except Exception as e:
-            print(f"[OCR] EasyOCR initialization warning: {e}")
+        # 2. Fast High-Accuracy EasyOCR (Cached Globally)
+        if _GLOBAL_EASY_READER is None:
+            try:
+                import easyocr
+                _GLOBAL_EASY_READER = easyocr.Reader(lang, gpu=False)
+                print("[OCR] Cached EasyOCR engine initialized successfully.")
+            except Exception as e:
+                print(f"[OCR] EasyOCR initialization warning: {e}")
+
+        self.easy_reader = _GLOBAL_EASY_READER
 
     def read_text_paddle(self, image: np.ndarray) -> tuple[str, float]:
         """Reads text using PaddleOCR safely."""
@@ -56,20 +61,15 @@ class OCREngine:
             return "", 0.0
 
     def read_text_easy(self, image: np.ndarray) -> tuple[str, float]:
-        """Reads text using EasyOCR safely without multi-worker deadlocks."""
+        """Reads text using EasyOCR safely without multi-worker deadlocks or redundant retries."""
         if not self.easy_reader or image is None or image.size == 0:
             return "", 0.0
         try:
-            # workers=0 and batch_size=1 prevent PyTorch DataLoader spinlocks on Windows CPU
-            result = self.easy_reader.readtext(image, workers=0, batch_size=1, detail=1)
-            if not result:
-                # Try with whitelist for alphanumeric characters
-                result = self.easy_reader.readtext(
-                    image, workers=0, batch_size=1, detail=1,
-                    allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-                )
+            # Single-pass inference with batch_size=1 and workers=0 prevents CPU DataLoader spinlocks
+            result = self.easy_reader.readtext(image, workers=0, batch_size=1, detail=1, paragraph=False)
             if not result:
                 return "", 0.0
+
             texts = []
             confs = []
             for item in result:
@@ -86,16 +86,14 @@ class OCREngine:
 
     def read_text(self, image: np.ndarray) -> tuple[str, float]:
         """
-        Reads text from an image. Uses PaddleOCR if verified working,
+        Reads text from an image. Uses PaddleOCR if enabled/verified,
         otherwise seamlessly executes EasyOCR.
         """
-        # 1. Prioritize PaddleOCR if verified
         if self.paddle_ocr is not None:
             p_text, p_conf = self.read_text_paddle(image)
             if p_text and p_conf > 0.30:
                 return p_text, p_conf
 
-        # 2. EasyOCR engine
         if self.easy_reader is not None:
             e_text, e_conf = self.read_text_easy(image)
             if e_text:
@@ -103,10 +101,15 @@ class OCREngine:
 
         return "", 0.0
 
-    def read_from_variants(self, image_variants: dict) -> tuple[str, float]:
+    def read_from_variants(
+        self,
+        image_variants: dict,
+        validator = None,
+        fast_mode: bool = False
+    ) -> tuple[str, float]:
         """
-        Runs OCR on preprocessed image variants in optimal priority order.
-        Accumulates partial character candidates and returns the best recognition result.
+        Runs OCR on prioritized preprocessed image variants with early-exit.
+        Immediately terminates upon detecting a verified valid license plate.
         """
         self.last_detected_tokens = []
         if not image_variants:
@@ -116,47 +119,49 @@ class OCREngine:
         best_conf = 0.0
         all_tokens = []
 
-        # Optimal priority sequence for blurred/small surveillance plates
-        priority_order = [
-            'padded_upscaled',
-            'clahe_sharp',
-            'bilateral',
-            'unsharp',
-            'adaptive',
-            'otsu',
-            'contrast',
-            'sharpened',
-            'grayscale',
-            'original'
-        ]
+        # High-yield priority sequence
+        if fast_mode:
+            priority_order = ['clahe_sharp', 'original']
+            max_variants = 1
+        else:
+            priority_order = ['clahe_sharp', 'padded_upscaled', 'adaptive', 'original']
+            max_variants = 3
 
         ordered_variants = []
         for k in priority_order:
             if k in image_variants:
                 ordered_variants.append((k, image_variants[k]))
 
-        # Include any remaining variants not in priority list
-        for k, v in image_variants.items():
-            if (k, v) not in ordered_variants:
-                ordered_variants.append((k, v))
-
+        variants_checked = 0
         for variant_name, img in ordered_variants:
             if img is None or img.size == 0:
                 continue
 
+            variants_checked += 1
             text, conf = self.read_text(img)
             clean_token = "".join(c for c in text.upper() if c.isalnum())
             if clean_token:
                 all_tokens.append(clean_token)
 
+            # Check if cleaned plate is valid Indian registration
+            if validator is not None:
+                cleaned_val = validator.clean_text(text)
+                if validator.is_valid(cleaned_val) and len(cleaned_val) >= 8 and conf >= 0.40:
+                    self.last_detected_tokens = [clean_token]
+                    return text, max(best_conf, conf)
+
             if conf > best_conf or (len(clean_token) > len(best_text) and conf >= 0.40):
                 best_conf = max(best_conf, conf)
                 best_text = text
 
-            # Early exit if we already have a long confident read (e.g. full Indian plate)
-            if best_conf >= 0.78 and len(clean_token) >= 8:
+            # Early exit on confident plate read
+            if best_conf >= 0.70 and len(clean_token) >= 8:
+                break
+
+            if variants_checked >= max_variants:
                 break
 
         self.last_detected_tokens = all_tokens
         return best_text, best_conf
+
 

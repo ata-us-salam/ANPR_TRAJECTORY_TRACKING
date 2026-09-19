@@ -16,9 +16,9 @@ class VehicleDetector:
         # COCO class IDs: 2: car, 3: motorcycle, 5: bus, 7: truck
         self.vehicle_classes = [2, 3, 5, 7]
 
-    def detect(self, frame: np.ndarray, conf_threshold: float = 0.5):
+    def detect(self, frame: np.ndarray, conf_threshold: float = 0.5, imgsz: int = 640):
         """
-        Detects vehicles in a frame.
+        Detects vehicles in a frame with optimized input sizing.
         Returns a list of dictionaries with bounding box and confidence.
         """
         if not self.model_loaded:
@@ -30,7 +30,7 @@ class VehicleDetector:
                 'class_id': 2
             }]
             
-        results = self.model(frame, classes=self.vehicle_classes, conf=conf_threshold, verbose=False)
+        results = self.model(frame, classes=self.vehicle_classes, conf=conf_threshold, verbose=False, imgsz=imgsz)
         
         vehicles = []
         for r in results:

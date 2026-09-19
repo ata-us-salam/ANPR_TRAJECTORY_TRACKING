@@ -67,6 +67,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[Startup] Alert generation skipped: {e}")
 
+    # Pre-warm AI Inference Models so first user upload has 0s cold-start latency
+    try:
+        from backend.api.inference_api import get_pipeline
+        print("[Startup] Pre-warming AI inference pipeline (YOLOv8 + OCR)...")
+        pipeline = await asyncio.to_thread(get_pipeline)
+        import numpy as np
+        dummy = np.zeros((64, 128, 3), dtype=np.uint8)
+        await asyncio.to_thread(pipeline.ocr_engine.read_text, dummy)
+        print("[Startup] AI pipeline pre-warmed and ready for instant inference.")
+    except Exception as e:
+        print(f"[Startup] AI pipeline pre-warming skipped: {e}")
+
     # Start Autonomous Live City ANPR Traffic Streamer
     try:
         from backend.services.traffic_streamer import traffic_streamer
