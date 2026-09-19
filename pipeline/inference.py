@@ -195,9 +195,30 @@ class SingleImagePipeline:
 
             for p_idx, plate in enumerate(plates):
                 px1, py1, px2, py2 = plate['bbox']
-                plate_img = vehicle_img[py1:py2, px1:px2]
+                vh, vw = vehicle_img.shape[:2]
+                pw = px2 - px1
+                ph = py2 - py1
+                # 10-15% bounding box expansion to prevent clipping edge characters
+                pad_x = int(pw * 0.15)
+                pad_y = int(ph * 0.15)
+                crop_x1 = max(0, px1 - pad_x)
+                crop_y1 = max(0, py1 - pad_y)
+                crop_x2 = min(vw, px2 + pad_x)
+                crop_y2 = min(vh, py2 + pad_y)
+                plate_img = vehicle_img[crop_y1:crop_y2, crop_x1:crop_x2]
                 if plate_img.size == 0:
                     continue
+
+                # Diagnose crop: log shape & save debug image
+                ch, cw = plate_img.shape[:2]
+                debug_path = os.path.join(BASE_DIR, "data", "debug_plate_crop.jpg")
+                try:
+                    cv2.imwrite(debug_path, plate_img)
+                except Exception:
+                    pass
+                print(f"    [OCR Input Crop] Shape: {plate_img.shape} (H={ch}, W={cw})")
+                if ch < 40 or cw < 120:
+                    print(f"    [OCR Dimension Warning] Crop ({ch}x{cw}) < 40x120; triggering perspective deskew & super-resolution upscaling.")
 
                 # 3. Streamlined Image Enhancement Variants
                 variants = self.enhancer.preprocess_for_ocr(plate_img)
@@ -228,11 +249,29 @@ class SingleImagePipeline:
         # Fallback if no plates localized inside vehicle crops: inspect whole image
         if not results:
             fallback_plates = self.plate_detector.detect(image, imgsz=640)
+            ih, iw = image.shape[:2]
             for p_idx, plate in enumerate(fallback_plates):
                 px1, py1, px2, py2 = plate['bbox']
-                p_crop = image[py1:py2, px1:px2]
+                pw = px2 - px1
+                ph = py2 - py1
+                pad_x = int(pw * 0.15)
+                pad_y = int(ph * 0.15)
+                crop_x1 = max(0, px1 - pad_x)
+                crop_y1 = max(0, py1 - pad_y)
+                crop_x2 = min(iw, px2 + pad_x)
+                crop_y2 = min(ih, py2 + pad_y)
+                p_crop = image[crop_y1:crop_y2, crop_x1:crop_x2]
                 if p_crop.size == 0:
                     continue
+
+                ch, cw = p_crop.shape[:2]
+                debug_path = os.path.join(BASE_DIR, "data", "debug_plate_crop.jpg")
+                try:
+                    cv2.imwrite(debug_path, p_crop)
+                except Exception:
+                    pass
+                print(f"    [Fallback OCR Input Crop] Shape: {p_crop.shape} (H={ch}, W={cw})")
+
                 variants = self.enhancer.preprocess_for_ocr(p_crop)
                 text, conf = self.ocr_engine.read_from_variants(variants, validator=self.validator)
                 cleaned_text = self.validator.clean_text(text)

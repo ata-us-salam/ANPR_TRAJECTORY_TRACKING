@@ -1,0 +1,12 @@
+# ==============================================================================
+# YOLOv8 License Plate Detection Dataset Specification
+# Two-Stage Architecture: Stage 2 Dedicated Plate Detector (Vehicle Crop Input)
+# ==============================================================================
+
+path: ./dataset/plate_dataset  # dataset root dir
+train: images/train           # train images (relative to 'path')
+val: images/val               # val images (relative to 'path')
+
+# Classes
+names:
+  0: license_plate

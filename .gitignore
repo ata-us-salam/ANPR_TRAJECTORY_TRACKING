@@ -58,5 +58,6 @@ dataset/archive*/
 # Root temp screenshots & debug scripts
 /*.png
 /dryrun.py
+data/debug_plate_crop.jpg
 /inspect_browser.py
 /inspect_dom.py

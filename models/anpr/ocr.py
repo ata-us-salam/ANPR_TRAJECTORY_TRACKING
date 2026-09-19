@@ -33,27 +33,38 @@ class OCREngine:
 
         self.easy_reader = _GLOBAL_EASY_READER
 
-    def read_text_paddle(self, image: np.ndarray) -> tuple[str, float]:
-        """Reads text using PaddleOCR safely."""
+    def read_text_paddle(self, image: np.ndarray, is_crop: bool = True) -> tuple[str, float]:
+        """Reads text using PaddleOCR in direct recognition mode (det=False) on pre-cropped plates."""
         if not self.paddle_ocr or image is None or image.size == 0:
             return "", 0.0
         try:
-            result = self.paddle_ocr.ocr(image)
+            # Use det=False when processing already cropped plates to skip redundant text detection
+            result = self.paddle_ocr.ocr(image, det=not is_crop, cls=False)
             if not result:
                 return "", 0.0
             
             texts = []
             confs = []
-            for res in result:
-                if res and isinstance(res, list):
-                    for line in res:
-                        if isinstance(line, list) and len(line) >= 2:
-                            txt_info = line[1]
-                            if isinstance(txt_info, (tuple, list)):
-                                text = str(txt_info[0]).strip()
-                                conf = float(txt_info[1])
-                                texts.append(text)
-                                confs.append(conf)
+            if is_crop:
+                for item in result:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        if isinstance(item[0], str) and isinstance(item[1], (float, int)):
+                            texts.append(item[0].strip())
+                            confs.append(float(item[1]))
+                        elif isinstance(item[0], list):
+                            for sub in item:
+                                if isinstance(sub, (list, tuple)) and len(sub) >= 2:
+                                    texts.append(str(sub[0]).strip())
+                                    confs.append(float(sub[1]))
+            else:
+                for res in result:
+                    if res and isinstance(res, list):
+                        for line in res:
+                            if isinstance(line, list) and len(line) >= 2:
+                                txt_info = line[1]
+                                if isinstance(txt_info, (tuple, list)):
+                                    texts.append(str(txt_info[0]).strip())
+                                    confs.append(float(txt_info[1]))
             full_text = "".join(texts).strip()
             avg_confidence = sum(confs) / len(confs) if confs else 0.0
             return full_text, avg_confidence
@@ -61,12 +72,22 @@ class OCREngine:
             return "", 0.0
 
     def read_text_easy(self, image: np.ndarray) -> tuple[str, float]:
-        """Reads text using EasyOCR safely without multi-worker deadlocks or redundant retries."""
+        """
+        Reads text using EasyOCR restricted to 36 alphanumeric characters (A-Z, 0-9),
+        avoiding dictionary confusion and character drift.
+        """
         if not self.easy_reader or image is None or image.size == 0:
             return "", 0.0
         try:
-            # Single-pass inference with batch_size=1 and workers=0 prevents CPU DataLoader spinlocks
-            result = self.easy_reader.readtext(image, workers=0, batch_size=1, detail=1, paragraph=False)
+            # Enforce 36-char alphanumeric vocabulary (A-Z, 0-9) matching Indian RTO plates
+            result = self.easy_reader.readtext(
+                image,
+                workers=0,
+                batch_size=1,
+                detail=1,
+                paragraph=False,
+                allowlist='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+            )
             if not result:
                 return "", 0.0
 
