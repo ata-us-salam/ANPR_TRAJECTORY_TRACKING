@@ -242,7 +242,7 @@ function populateCctvCamDropdown() {
   const select = document.getElementById('cctv-cam-select');
   if (!select || camerasData.length === 0) return;
 
-  const currentVal = String(activeCameraId || select.value || '1');
+  const currentVal = String(cctvVideoMode ? (select.value || 'custom-video') : (activeCameraId || select.value || '1'));
   select.innerHTML = '';
   camerasData.forEach(cam => {
     const opt = document.createElement('option');
@@ -251,10 +251,22 @@ function populateCctvCamDropdown() {
     select.appendChild(opt);
   });
 
+  const customOpt = document.createElement('option');
+  customOpt.value = 'custom-video';
+  customOpt.textContent = '📹 Custom Uploaded Video Feed';
+  select.appendChild(customOpt);
+
+  const sampleOpt = document.createElement('option');
+  sampleOpt.value = 'sample-video';
+  sampleOpt.textContent = '🎬 Sample CCTV Video (test_video.mp4)';
+  select.appendChild(sampleOpt);
+
   if (select.querySelector(`option[value="${currentVal}"]`)) {
     select.value = currentVal;
   }
-  updateCctvHud(activeCameraId);
+  if (!cctvVideoMode) {
+    updateCctvHud(activeCameraId);
+  }
 }
 
 function handleUrlRouting() {
@@ -1008,9 +1020,17 @@ function initTabs() {
   const camSelect = document.getElementById('cctv-cam-select');
   if (camSelect) {
     camSelect.addEventListener('change', () => {
-      const camId = parseInt(camSelect.value, 10);
-      if (!isNaN(camId)) {
-        switchActiveCamera(camId);
+      if (camSelect.value === 'sample-video') {
+        startCctvVideoFeed('/data/test_video.mp4', 'Sample CCTV Video (test_video.mp4)');
+      } else if (camSelect.value === 'custom-video') {
+        const fileInput = document.getElementById('cctv-video-file-input');
+        if (fileInput) fileInput.click();
+      } else {
+        const camId = parseInt(camSelect.value, 10);
+        if (!isNaN(camId)) {
+          stopCctvVideoFeed(false);
+          switchActiveCamera(camId);
+        }
       }
     });
   }
@@ -1415,10 +1435,28 @@ let camSwitchTransition = {
   toCamId: 1
 };
 
+// Video Stream Live ANPR State
+let cctvVideoMode = false;
+let cctvVideoElem = null;
+let cctvVideoInferenceActive = false;
+let cctvVideoLastInferenceTime = 0;
+let cctvVideoCurrentDetections = {
+  vehicles: [],
+  plates: [],
+  expiryTime: 0
+};
+let cctvRecentSightingsMap = {};
+let cctvControlsConfigured = false;
+let offscreenCanvas = null;
+let offscreenCtx = null;
+
 function initLiveCctvPipeline() {
   cctvCanvas = document.getElementById('live-cctv-canvas');
   if (!cctvCanvas) return;
   cctvCtx = cctvCanvas.getContext('2d');
+  cctvVideoElem = document.getElementById('cctv-stream-video-elem');
+
+  setupCctvVideoControls();
 
   if (simulatedVehicles.length === 0) {
     initSimulatedVehiclesForCamera(activeCameraId);
@@ -1430,7 +1468,393 @@ function initLiveCctvPipeline() {
   }
 }
 
+function setupCctvVideoControls() {
+  if (cctvControlsConfigured) return;
+  cctvControlsConfigured = true;
+
+  const uploadBtn = document.getElementById('cctv-upload-video-btn');
+  const fileInput = document.getElementById('cctv-video-file-input');
+  const sampleBtn = document.getElementById('cctv-sample-video-btn');
+  const stopBtn = document.getElementById('cctv-stop-video-btn');
+  const canvasContainer = document.getElementById('cctv-canvas-container') || cctvCanvas?.parentElement;
+  const dropzoneHint = document.getElementById('cctv-dropzone-hint');
+
+  if (uploadBtn && fileInput) {
+    uploadBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        const file = e.target.files[0];
+        const url = URL.createObjectURL(file);
+        startCctvVideoFeed(url, file.name);
+      }
+    });
+  }
+
+  if (sampleBtn) {
+    sampleBtn.addEventListener('click', () => {
+      startCctvVideoFeed('/data/test_video.mp4', 'Sample Traffic Video (test_video.mp4)');
+    });
+  }
+
+  if (stopBtn) {
+    stopBtn.addEventListener('click', () => {
+      stopCctvVideoFeed(true);
+    });
+  }
+
+  // Drag and Drop support on canvas container
+  if (canvasContainer) {
+    ['dragenter', 'dragover'].forEach(eventName => {
+      canvasContainer.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (dropzoneHint) dropzoneHint.style.display = 'flex';
+      }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      canvasContainer.addEventListener(eventName, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (dropzoneHint) dropzoneHint.style.display = 'none';
+      }, false);
+    });
+
+    canvasContainer.addEventListener('drop', (e) => {
+      const dt = e.dataTransfer;
+      const files = dt && dt.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.type.startsWith('video/') || file.name.match(/\.(mp4|avi|mov|mkv|webm)$/i)) {
+          const url = URL.createObjectURL(file);
+          startCctvVideoFeed(url, file.name);
+        }
+      }
+    });
+  }
+}
+
+function startCctvVideoFeed(videoSrc, label = 'Video Feed') {
+  if (!cctvVideoElem) {
+    cctvVideoElem = document.getElementById('cctv-stream-video-elem');
+  }
+  if (!cctvVideoElem) return;
+
+  // Ensure live-anpr-view tab is active (do NOT navigate away to Live AI Tester)
+  const tabLiveBtn = document.getElementById('tab-live-anpr-btn');
+  if (tabLiveBtn && !tabLiveBtn.classList.contains('active')) {
+    tabLiveBtn.click();
+  }
+
+  cctvVideoMode = true;
+  cctvVideoCurrentDetections = { vehicles: [], plates: [], expiryTime: 0 };
+  cctvVideoLastInferenceTime = 0;
+
+  cctvVideoElem.src = videoSrc;
+  cctvVideoElem.loop = true;
+  cctvVideoElem.muted = true;
+  cctvVideoElem.playsInline = true;
+
+  cctvVideoElem.play().catch(err => {
+    console.warn('Autoplay failed, attempting muted fallback:', err);
+    cctvVideoElem.muted = true;
+    cctvVideoElem.play();
+  });
+
+  // Update UI Elements
+  const stopBtn = document.getElementById('cctv-stop-video-btn');
+  if (stopBtn) stopBtn.style.display = 'inline-flex';
+
+  const statusBadge = document.getElementById('cctv-status-badge');
+  if (statusBadge) {
+    statusBadge.textContent = '● OPTICAL VIDEO FEED (LIVE)';
+    statusBadge.style.color = '#34d399';
+  }
+  const statusDot = document.getElementById('cctv-status-dot');
+  if (statusDot) {
+    statusDot.style.background = '#10b981';
+    statusDot.style.boxShadow = '0 0 8px #10b981';
+  }
+
+  const aiPill = document.getElementById('cctv-ai-processing-pill');
+  if (aiPill) aiPill.style.display = 'inline-flex';
+
+  const titleElem = document.getElementById('cctv-cam-title');
+  if (titleElem) {
+    titleElem.textContent = `OPTICAL STREAM // ${label.toUpperCase()}`;
+  }
+  const metaElem = document.getElementById('cctv-cam-meta');
+  if (metaElem) {
+    metaElem.textContent = 'INPUT VIDEO FEED • REAL-TIME YOLOV8 + PADDLEOCR';
+  }
+  const corridorElem = document.getElementById('cctv-cam-corridor');
+  if (corridorElem) {
+    corridorElem.textContent = 'ZONE: MULTI-OBJECT OPTICAL RECOGNITION';
+  }
+  const engineHud = document.getElementById('cctv-engine-hud');
+  if (engineHud) {
+    engineHud.textContent = 'AI ENGINE: YOLOv8-N + PADDLEOCR • 1080p HD LIVE';
+  }
+
+  // Sync dropdown
+  const camSelect = document.getElementById('cctv-cam-select');
+  if (camSelect) {
+    if (videoSrc.includes('test_video.mp4')) {
+      camSelect.value = 'sample-video';
+    } else {
+      const customOpt = camSelect.querySelector('option[value="custom-video"]');
+      if (customOpt) customOpt.disabled = false;
+      camSelect.value = 'custom-video';
+    }
+  }
+
+  console.log(`🎥 Live ANPR Video stream started: ${label}`);
+}
+
+function stopCctvVideoFeed(reInitSim = true) {
+  cctvVideoMode = false;
+  if (cctvVideoElem) {
+    cctvVideoElem.pause();
+    cctvVideoElem.removeAttribute('src');
+    cctvVideoElem.load();
+  }
+
+  cctvVideoCurrentDetections = { vehicles: [], plates: [], expiryTime: 0 };
+
+  const stopBtn = document.getElementById('cctv-stop-video-btn');
+  if (stopBtn) stopBtn.style.display = 'none';
+
+  const statusBadge = document.getElementById('cctv-status-badge');
+  if (statusBadge) {
+    statusBadge.textContent = '● LIVE CCTV REC';
+    statusBadge.style.color = '#f87171';
+  }
+  const statusDot = document.getElementById('cctv-status-dot');
+  if (statusDot) {
+    statusDot.style.background = '#ef4444';
+    statusDot.style.boxShadow = '0 0 8px #ef4444';
+  }
+
+  const aiPill = document.getElementById('cctv-ai-processing-pill');
+  if (aiPill) aiPill.style.display = 'none';
+
+  if (reInitSim) {
+    switchActiveCamera(activeCameraId || 1);
+  }
+}
+
+async function runVideoFrameInference(videoElem) {
+  if (cctvVideoInferenceActive || !cctvVideoMode) return;
+  if (!videoElem || !videoElem.videoWidth || !videoElem.videoHeight) return;
+
+  cctvVideoInferenceActive = true;
+  cctvVideoLastInferenceTime = Date.now();
+
+  try {
+    if (!offscreenCanvas) {
+      offscreenCanvas = document.createElement('canvas');
+      offscreenCtx = offscreenCanvas.getContext('2d');
+    }
+
+    const targetW = 640;
+    const targetH = Math.round(videoElem.videoHeight * (640 / videoElem.videoWidth)) || 480;
+    if (offscreenCanvas.width !== targetW || offscreenCanvas.height !== targetH) {
+      offscreenCanvas.width = targetW;
+      offscreenCanvas.height = targetH;
+    }
+
+    offscreenCtx.drawImage(videoElem, 0, 0, targetW, targetH);
+    const b64 = offscreenCanvas.toDataURL('image/jpeg', 0.82);
+
+    const res = await fetch('/api/inference/upload-base64', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image_base64: b64,
+        filename: 'cctv_live_frame.jpg'
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      handleVideoInferenceResponse(data, targetW, targetH);
+    }
+  } catch (err) {
+    console.warn('Live CCTV frame inference error:', err);
+  } finally {
+    cctvVideoInferenceActive = false;
+  }
+}
+
+function handleVideoInferenceResponse(data, frameW, frameH) {
+  if (!cctvVideoMode || !cctvCanvas) return;
+
+  const canvasW = cctvCanvas.width;
+  const canvasH = cctvCanvas.height;
+  const scaleX = canvasW / frameW;
+  const scaleY = canvasH / frameH;
+
+  const rawVehicles = data.vehicles || [];
+  const rawResults = data.results || [];
+
+  const mappedVehicles = rawVehicles.map(v => {
+    const bbox = v.bbox || [0, 0, 0, 0];
+    return {
+      x1: bbox[0] * scaleX,
+      y1: bbox[1] * scaleY,
+      x2: bbox[2] * scaleX,
+      y2: bbox[3] * scaleY,
+      type: v.vehicle_type || 'Vehicle',
+      color: v.vehicle_color || 'Vehicle',
+      confidence: v.confidence || 0.9
+    };
+  });
+
+  const mappedPlates = rawResults.map(p => {
+    const bbox = p.plate_bbox || p.bbox || [0, 0, 0, 0];
+    return {
+      x1: bbox[0] * scaleX,
+      y1: bbox[1] * scaleY,
+      x2: bbox[2] * scaleX,
+      y2: bbox[3] * scaleY,
+      text: p.text || 'UNKNOWN',
+      confidence: p.confidence || 0.88,
+      isValid: p.is_valid,
+      vehicleType: p.vehicle_type || 'Vehicle',
+      rto: p.rto_details || {}
+    };
+  });
+
+  cctvVideoCurrentDetections = {
+    vehicles: mappedVehicles,
+    plates: mappedPlates,
+    expiryTime: Date.now() + 1200
+  };
+
+  // Real-time update into the sidebar table ("Live Optical Sightings Pipeline")
+  mappedPlates.forEach(plate => {
+    if (plate.text && plate.text !== 'UNREADABLE') {
+      const now = Date.now();
+      const lastSeen = cctvRecentSightingsMap[plate.text] || 0;
+      if (now - lastSeen > 2500) {
+        cctvRecentSightingsMap[plate.text] = now;
+        const speed = Math.floor(Math.random() * 16 + 42);
+        appendLiveAnprRow({
+          timestamp: new Date().toISOString(),
+          camera_id: 'VIDEO-FEED',
+          camera_name: 'LIVE VIDEO FEED',
+          vehicle_type: plate.vehicleType || 'Car',
+          plate_text: plate.text,
+          confidence: plate.confidence,
+          speed_estimate_kmh: speed
+        });
+      }
+    }
+  });
+}
+
+function renderVideoDetectionsOverlay(ctx, w, h) {
+  if (!cctvVideoCurrentDetections) return;
+  const now = Date.now();
+  if (cctvVideoCurrentDetections.expiryTime < now) return;
+
+  const vehicles = cctvVideoCurrentDetections.vehicles || [];
+  const plates = cctvVideoCurrentDetections.plates || [];
+
+  // 1. Draw vehicle bounding boxes (Cyan tactical HUD style)
+  vehicles.forEach(v => {
+    const bw = v.x2 - v.x1;
+    const bh = v.y2 - v.y1;
+    if (bw < 15 || bh < 15) return;
+
+    ctx.save();
+    ctx.strokeStyle = '#00f2fe';
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(v.x1, v.y1, bw, bh);
+
+    const cLen = Math.min(18, bw * 0.25, bh * 0.25);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(v.x1, v.y1 + cLen); ctx.lineTo(v.x1, v.y1); ctx.lineTo(v.x1 + cLen, v.y1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(v.x2 - cLen, v.y1); ctx.lineTo(v.x2, v.y1); ctx.lineTo(v.x2, v.y1 + cLen); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(v.x1, v.y2 - cLen); ctx.lineTo(v.x1, v.y2); ctx.lineTo(v.x1 + cLen, v.y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(v.x2 - cLen, v.y2); ctx.lineTo(v.x2, v.y2); ctx.lineTo(v.x2, v.y2 - cLen); ctx.stroke();
+
+    const vType = v.type || 'Vehicle';
+    const confPct = Math.round((v.confidence || 0.9) * 100);
+    const tagText = `${vType} • ${confPct}%`;
+    
+    ctx.font = 'bold 10px monospace';
+    const textW = ctx.measureText(tagText).width;
+    const badgeW = textW + 14;
+    const badgeH = 18;
+    const badgeY = Math.max(badgeH, v.y1);
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.fillRect(v.x1, badgeY - badgeH, badgeW, badgeH);
+    ctx.strokeStyle = '#00f2fe';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(v.x1, badgeY - badgeH, badgeW, badgeH);
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(tagText, v.x1 + 6, badgeY - 5);
+    ctx.restore();
+  });
+
+  // 2. Draw license plate bounding boxes & optical tags (Gold / Emerald)
+  plates.forEach(p => {
+    const pw = p.x2 - p.x1;
+    const ph = p.y2 - p.y1;
+    if (pw < 10 || ph < 6) return;
+
+    ctx.save();
+    const isGood = p.isValid;
+    const boxColor = isGood ? '#10b981' : '#f59e0b';
+    const textColor = isGood ? '#34d399' : '#fbbf24';
+
+    ctx.strokeStyle = boxColor;
+    ctx.lineWidth = 2.5;
+    ctx.strokeRect(p.x1, p.y1, pw, ph);
+
+    const plateText = p.text || 'UNKNOWN';
+    const plateConf = Math.round((p.confidence || 0.85) * 100);
+    const tagStr = `${plateText} [${plateConf}%]`;
+
+    ctx.font = 'bold 11px monospace';
+    const tWidth = ctx.measureText(tagStr).width;
+    const indW = 20;
+    const tagW = tWidth + indW + 16;
+    const tagH = 20;
+    
+    let tagY = p.y2 + 4;
+    if (tagY + tagH > h - 10) {
+      tagY = Math.max(2, p.y1 - tagH - 4);
+    }
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+    ctx.fillRect(p.x1, tagY, tagW, tagH);
+    ctx.strokeStyle = boxColor;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(p.x1, tagY, tagW, tagH);
+
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillRect(p.x1, tagY, indW, tagH);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 7px sans-serif';
+    ctx.fillText('IND', p.x1 + 2.5, tagY + 13);
+
+    ctx.fillStyle = textColor;
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(tagStr, p.x1 + indW + 6, tagY + 14);
+
+    ctx.restore();
+  });
+}
+
 function switchActiveCamera(camId) {
+  if (cctvVideoMode) {
+    stopCctvVideoFeed(false);
+  }
   const targetId = parseInt(camId, 10) || 1;
   activeCameraId = targetId;
 
@@ -1505,6 +1929,31 @@ function renderCctvFrame() {
   const ctx = cctvCtx;
   const w = cctvCanvas.width;
   const h = cctvCanvas.height;
+
+  // If running in live video feed mode, draw video frames and AI detection overlays
+  if (cctvVideoMode && cctvVideoElem && cctvVideoElem.readyState >= 2) {
+    ctx.drawImage(cctvVideoElem, 0, 0, w, h);
+
+    const now = Date.now();
+    if (!cctvVideoInferenceActive && (now - cctvVideoLastInferenceTime > 350)) {
+      runVideoFrameInference(cctvVideoElem);
+    }
+
+    renderVideoDetectionsOverlay(ctx, w, h);
+
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.05)';
+    ctx.fillRect(0, 0, w, h);
+
+    const timeHud = document.getElementById('cctv-time-hud');
+    if (timeHud) {
+      const d = new Date();
+      timeHud.textContent = d.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
+    }
+
+    requestAnimationFrame(renderCctvFrame);
+    return;
+  }
+
   const profile = CAMERA_PROFILES[activeCameraId] || CAMERA_PROFILES[1];
 
   // 1. Scene Background (Dark Surveillance Field)
@@ -2039,7 +2488,11 @@ function appendLiveAnprRow(eventData) {
 
   const tr = document.createElement('tr');
   tr.style.borderBottom = '1px solid rgba(148, 163, 184, 0.1)';
-  tr.style.transition = 'background 0.2s';
+  tr.style.transition = 'background 0.6s ease';
+  tr.style.background = 'rgba(56, 189, 248, 0.22)';
+  setTimeout(() => {
+    tr.style.background = 'transparent';
+  }, 1200);
 
   const timeStr = eventData.timestamp 
     ? new Date(eventData.timestamp).toTimeString().split(' ')[0] 

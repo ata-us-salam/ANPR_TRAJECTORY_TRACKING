@@ -226,9 +226,11 @@ async def upload_base64_and_infer(req: Base64ImageRequest):
         if isinstance(pipeline_output, dict):
             detections = pipeline_output.get("results", [])
             annotated_image = pipeline_output.get("annotated_image", None)
+            vehicles = pipeline_output.get("vehicles", [])
         else:
             detections = pipeline_output or []
             annotated_image = None
+            vehicles = []
 
         for det in detections:
             if det.get("is_valid") and det.get("text"):
@@ -243,6 +245,7 @@ async def upload_base64_and_infer(req: Base64ImageRequest):
             "filename": os.path.basename(req.filename) if req.filename else "uploaded_image.jpg",
             "detections_count": len(detections),
             "results": detections,
+            "vehicles": vehicles,
             "annotated_image": annotated_image
         }
     except HTTPException:

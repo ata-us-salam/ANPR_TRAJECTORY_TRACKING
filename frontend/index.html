@@ -333,8 +333,21 @@
             Optical Video Feed ➔ Vehicle Bounding Box ➔ License Plate Localization ➔ OCR Engine ➔ Confidence Scoring ➔ Database Ingestion
           </p>
         </div>
-        <div style="display:flex; gap:10px; align-items:center;">
-          <label style="font-size:12px; color:#94a3b8; font-weight:700;">CAMERA FEED:</label>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <input type="file" id="cctv-video-file-input" accept="video/mp4,video/avi,video/mov,video/mkv,video/*" style="display:none;" />
+          <button id="cctv-upload-video-btn" type="button" class="btn" style="background:linear-gradient(135deg, #0284c7, #2563eb); color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; box-shadow:0 2px 8px rgba(37,99,235,0.35); transition:all 0.2s ease;">
+            <span>📁</span> Input Video Feed
+          </button>
+          
+          <button id="cctv-sample-video-btn" type="button" class="btn" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.4); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.2s ease;">
+            <span>🎬</span> Load Sample Video
+          </button>
+
+          <button id="cctv-stop-video-btn" type="button" class="btn" style="display:none; background:rgba(239,68,68,0.2); color:#fca5a5; border:1px solid rgba(239,68,68,0.5); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; align-items:center; gap:6px; transition:all 0.2s ease;">
+            <span>⏹</span> Exit Video Feed
+          </button>
+
+          <label style="font-size:12px; color:#94a3b8; font-weight:700; margin-left:6px;">CAMERA FEED:</label>
           <select id="cctv-cam-select" class="search-input-box" style="padding:6px 12px; background:rgba(15,23,42,0.8); color:#38bdf8; border:1px solid rgba(59,130,246,0.3); border-radius:6px; font-weight:700;">
             <option value="1">CAM-001 Rasulgarh Junction (North → South)</option>
             <option value="2">CAM-002 Vani Vihar Square (East → West)</option>
@@ -344,6 +357,8 @@
             <option value="9">CAM-009 Patia Square (North → South)</option>
             <option value="10">CAM-010 KIIT Square (East → West)</option>
             <option value="11">CAM-011 Infocity Junction (East → West)</option>
+            <option value="custom-video" disabled>📹 Custom Uploaded Video Feed</option>
+            <option value="sample-video">🎬 Sample CCTV Video (test_video.mp4)</option>
           </select>
         </div>
       </div>
@@ -355,21 +370,35 @@
         <div style="background:var(--card-bg, rgba(16,24,45,0.85)); border:1px solid rgba(59,130,246,0.25); border-radius:12px; padding:16px; box-shadow:0 8px 32px rgba(0,0,0,0.3);">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
             <div style="display:flex; align-items:center; gap:8px;">
-              <span style="width:8px; height:8px; background:#ef4444; border-radius:50%; box-shadow:0 0 8px #ef4444; display:inline-block;"></span>
+              <span style="width:8px; height:8px; background:#ef4444; border-radius:50%; box-shadow:0 0 8px #ef4444; display:inline-block;" id="cctv-status-dot"></span>
               <span style="font-size:12px; font-weight:800; color:#f87171; letter-spacing:1px;" id="cctv-status-badge">● LIVE CCTV REC</span>
             </div>
             <span style="font-size:11px; font-family:monospace; color:#94a3b8;" id="cctv-fps-counter">30 FPS • 1080p HD</span>
           </div>
 
           <!-- Video / Simulation Canvas -->
-          <div style="position:relative; width:100%; border-radius:8px; overflow:hidden; border:1px solid rgba(59,130,246,0.3); background:#020617;">
-            <canvas id="live-cctv-canvas" width="640" height="380" style="width:100%; height:auto; display:block;"></canvas>
-            <div id="cctv-hud-overlay" style="position:absolute; top:10px; left:10px; pointer-events:none; font-family:monospace; font-size:11px; color:#38bdf8; text-shadow:0 0 4px #000; line-height:1.45; background:rgba(2,6,23,0.78); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.25); backdrop-filter:blur(4px); box-shadow:0 4px 16px rgba(0,0,0,0.5);">
+          <div id="cctv-canvas-container" style="position:relative; width:100%; border-radius:8px; overflow:hidden; border:1px solid rgba(59,130,246,0.3); background:#020617;">
+            <video id="cctv-stream-video-elem" muted playsinline loop style="display:none;"></video>
+            <canvas id="live-cctv-canvas" width="640" height="380" style="width:100%; height:auto; display:block; cursor:pointer;"></canvas>
+            
+            <!-- Drag & Drop Overlay Hint -->
+            <div id="cctv-dropzone-hint" style="display:none; position:absolute; inset:0; background:rgba(15,23,42,0.9); border:2px dashed #38bdf8; border-radius:8px; z-index:20; flex-direction:column; align-items:center; justify-content:center; gap:8px; color:#38bdf8; font-family:monospace; pointer-events:none;">
+              <span style="font-size:32px;">📥</span>
+              <span style="font-weight:700; font-size:14px;">DROP VIDEO TO RUN LIVE ANPR STREAM</span>
+              <span style="font-size:11px; color:#94a3b8;">Supports MP4, AVI, MOV, MKV</span>
+            </div>
+
+            <div id="cctv-hud-overlay" style="position:absolute; top:10px; left:10px; pointer-events:none; font-family:monospace; font-size:11px; color:#38bdf8; text-shadow:0 0 4px #000; line-height:1.45; background:rgba(2,6,23,0.78); padding:8px 12px; border-radius:6px; border:1px solid rgba(56,189,248,0.25); backdrop-filter:blur(4px); box-shadow:0 4px 16px rgba(0,0,0,0.5); z-index:10;">
               <div id="cctv-cam-title" style="font-weight:800; font-size:12px; color:#38bdf8; letter-spacing:0.5px;">CAM-001 // RASULGARH JUNCTION</div>
               <div id="cctv-cam-meta" style="color:#94a3b8; font-size:10px;">DIR: NORTH → SOUTH • GPS: 20.2917° N, 85.8643° E</div>
               <div id="cctv-cam-corridor" style="color:#cbd5e1; font-size:10px;">ZONE: NH-16 CONFLUENCE • FLOW: 21.8 KM/H</div>
               <div id="cctv-time-hud" style="color:#e2e8f0;">2026-09-18 12:00:00 UTC</div>
-              <div style="color:#10b981; font-weight:700;">AI ENGINE: YOLOv8-N + PADDLEOCR • 1080p HD</div>
+              <div id="cctv-engine-hud" style="color:#10b981; font-weight:700;">AI ENGINE: YOLOv8-N + PADDLEOCR • 1080p HD</div>
+            </div>
+
+            <div id="cctv-ai-processing-pill" style="display:none; position:absolute; bottom:12px; right:12px; background:rgba(15,23,42,0.85); border:1px solid #10b981; padding:4px 10px; border-radius:20px; font-family:monospace; font-size:10px; color:#10b981; font-weight:700; z-index:10; align-items:center; gap:6px; box-shadow:0 0 12px rgba(16,185,129,0.3);">
+              <span style="display:inline-block; width:6px; height:6px; background:#10b981; border-radius:50%; box-shadow:0 0 6px #10b981;"></span>
+              <span>YOLOv8 + OCR REAL-TIME INFERENCE</span>
             </div>
           </div>
         </div>
